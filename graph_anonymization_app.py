@@ -13,7 +13,14 @@ from collections import Counter
 import random
 from copy import deepcopy
 import io
+import pandas as pd
 from method_details import ATTACKS_AND_GUARANTEES
+from definitions_and_attacks import (
+    ANONYMIZATION_DEFINITIONS,
+    ATTACKS_DICTIONARY,
+    GRAPH_PROPERTIES,
+    CONCRETE_ATTACK_EXAMPLES
+)
 
 # Configuration de la page
 st.set_page_config(
@@ -1020,6 +1027,202 @@ def plot_degree_distribution(G_orig, G_anon, method_name):
     return fig
 
 
+def simulate_degree_attack(G_orig, G_anon, target_node=0):
+    """Simule une attaque par degré sur le graphe"""
+    results = {
+        'attack_type': 'Degree Attack',
+        'target_node': target_node,
+        'success': False,
+        'candidates': [],
+        'explanation': ''
+    }
+
+    if not isinstance(G_anon, nx.Graph):
+        results['explanation'] = "Attaque impossible sur ce type de graphe (super-nodes)"
+        return results
+
+    # Degré du nœud cible dans le graphe original
+    target_degree = G_orig.degree(target_node)
+
+    # Chercher les nœuds ayant ce degré dans le graphe anonymisé
+    candidates = [n for n in G_anon.nodes() if G_anon.degree(n) == target_degree]
+
+    results['candidates'] = candidates
+    results['target_degree'] = target_degree
+
+    if len(candidates) == 1:
+        results['success'] = True
+        results['re_identified_node'] = candidates[0]
+        results['explanation'] = f"✅ Ré-identification réussie ! Le nœud {target_node} a un degré unique ({target_degree}). Un seul nœud candidat trouvé."
+    elif len(candidates) == 0:
+        results['success'] = False
+        results['explanation'] = f"❌ Aucun nœud avec degré {target_degree} trouvé (le degré a été modifié)."
+    else:
+        results['success'] = False
+        results['explanation'] = f"⚠️ Ré-identification ambiguë : {len(candidates)} nœuds ont le degré {target_degree}. Probabilité de succès : {1/len(candidates)*100:.1f}%"
+
+    return results
+
+
+def simulate_subgraph_attack(G_orig, G_anon, target_node=0):
+    """Simule une attaque par sous-graphe (recherche de triangles)"""
+    results = {
+        'attack_type': 'Subgraph Attack',
+        'target_node': target_node,
+        'success': False,
+        'candidates': [],
+        'explanation': ''
+    }
+
+    if not isinstance(G_anon, nx.Graph):
+        results['explanation'] = "Attaque impossible sur ce type de graphe (super-nodes)"
+        return results
+
+    # Trouver les triangles contenant le nœud cible dans le graphe original
+    target_triangles = []
+    for u, v in G_orig.edges(target_node):
+        if G_orig.has_edge(u, v):
+            target_triangles.append(sorted([target_node, u, v]))
+
+    if not target_triangles:
+        results['explanation'] = f"Le nœud {target_node} ne fait partie d'aucun triangle."
+        return results
+
+    # Caractéristiques du nœud : degré + nombre de triangles
+    target_degree = G_orig.degree(target_node)
+    target_triangle_count = len(target_triangles)
+
+    # Chercher les nœuds avec des caractéristiques similaires
+    candidates = []
+    for n in G_anon.nodes():
+        if G_anon.degree(n) == target_degree:
+            # Compter les triangles pour ce nœud
+            node_triangles = 0
+            for u, v in G_anon.edges(n):
+                if G_anon.has_edge(u, v):
+                    node_triangles += 1
+
+            if node_triangles == target_triangle_count:
+                candidates.append(n)
+
+    results['candidates'] = candidates
+    results['target_degree'] = target_degree
+    results['target_triangles'] = target_triangle_count
+
+    if len(candidates) == 1:
+        results['success'] = True
+        results['re_identified_node'] = candidates[0]
+        results['explanation'] = f"✅ Ré-identification réussie ! Pattern unique : degré {target_degree}, {target_triangle_count} triangles."
+    elif len(candidates) == 0:
+        results['success'] = False
+        results['explanation'] = f"❌ Aucun nœud correspondant (structure modifiée)."
+    else:
+        results['success'] = False
+        results['explanation'] = f"⚠️ {len(candidates)} candidats avec pattern similaire. Probabilité : {1/len(candidates)*100:.1f}%"
+
+    return results
+
+
+def calculate_utility_metrics(G_orig, G_anon):
+    """Calcule les métriques d'utilité du graphe"""
+    metrics = {}
+
+    if not isinstance(G_anon, nx.Graph):
+        return {'type': 'super-graph', 'comparable': False}
+
+    # Métriques de base
+    metrics['num_nodes'] = G_anon.number_of_nodes()
+    metrics['num_edges'] = G_anon.number_of_edges()
+    metrics['density'] = nx.density(G_anon)
+
+    # Clustering
+    try:
+        metrics['avg_clustering'] = nx.average_clustering(G_anon)
+    except:
+        metrics['avg_clustering'] = None
+
+    # Centralité moyenne
+    try:
+        degree_centrality = nx.degree_centrality(G_anon)
+        metrics['avg_degree_centrality'] = np.mean(list(degree_centrality.values()))
+    except:
+        metrics['avg_degree_centrality'] = None
+
+    # Diamètre (si graphe connexe)
+    try:
+        if nx.is_connected(G_anon):
+            metrics['diameter'] = nx.diameter(G_anon)
+            metrics['avg_shortest_path'] = nx.average_shortest_path_length(G_anon)
+        else:
+            # Prendre la plus grande composante connexe
+            largest_cc = max(nx.connected_components(G_anon), key=len)
+            subgraph = G_anon.subgraph(largest_cc)
+            metrics['diameter'] = nx.diameter(subgraph)
+            metrics['avg_shortest_path'] = nx.average_shortest_path_length(subgraph)
+    except:
+        metrics['diameter'] = None
+        metrics['avg_shortest_path'] = None
+
+    # Préservation de la distribution des degrés
+    orig_degrees = sorted([d for n, d in G_orig.degree()])
+    anon_degrees = sorted([d for n, d in G_anon.degree()])
+
+    if len(orig_degrees) == len(anon_degrees):
+        # Corrélation de Spearman
+        from scipy.stats import spearmanr
+        try:
+            corr, _ = spearmanr(orig_degrees, anon_degrees)
+            metrics['degree_correlation'] = corr
+        except:
+            metrics['degree_correlation'] = None
+
+    return metrics
+
+
+def calculate_privacy_metrics_separated(G_orig, G_anon, method_key, method_params):
+    """Calcule les métriques de privacy séparées"""
+    metrics = {}
+
+    if method_key == "k-degree anonymity":
+        degrees = dict(G_anon.degree()) if isinstance(G_anon, nx.Graph) else {}
+        degree_counts = Counter(degrees.values()) if degrees else Counter()
+        k_value = method_params.get('k', 2)
+        min_count = min(degree_counts.values()) if degree_counts else 0
+
+        metrics['k_value'] = k_value
+        metrics['min_anonymity_set'] = min_count
+        metrics['satisfies_k_anonymity'] = min_count >= k_value
+        metrics['re_identification_probability'] = 1/min_count if min_count > 0 else 1.0
+
+    elif method_key in ["EdgeFlip", "Laplace"]:
+        epsilon = method_params.get('epsilon', 1.0)
+        metrics['epsilon_budget'] = epsilon
+        metrics['privacy_loss_bound'] = np.exp(epsilon)
+        metrics['privacy_level'] = "Forte (ε<1)" if epsilon < 1.0 else ("Moyenne (1≤ε<2)" if epsilon < 2.0 else "Faible (ε≥2)")
+
+        if method_key == "EdgeFlip":
+            s = 1 - np.exp(-epsilon)
+            metrics['flip_probability'] = s
+            metrics['expected_noise_edges'] = int(G_orig.number_of_edges() * s / 2)
+
+    elif method_key == "Probabilistic":
+        k = method_params.get('k', 5)
+        eps = method_params.get('epsilon', 0.3)
+        metrics['k_candidates'] = k
+        metrics['epsilon_tolerance'] = eps
+        metrics['min_entropy'] = np.log(k) - eps
+        metrics['confusion_factor'] = k
+
+    elif method_key == "Generalization":
+        if hasattr(G_anon, 'graph') and 'cluster_to_nodes' in G_anon.graph:
+            cluster_sizes = [len(nodes) for nodes in G_anon.graph['cluster_to_nodes'].values()]
+            metrics['min_cluster_size'] = min(cluster_sizes) if cluster_sizes else 0
+            metrics['avg_cluster_size'] = np.mean(cluster_sizes) if cluster_sizes else 0
+            metrics['max_privacy'] = 1/min(cluster_sizes) if cluster_sizes else 1.0
+
+    return metrics
+
+
 def main():
     """Application principale Streamlit"""
 
@@ -1070,11 +1273,92 @@ def main():
     st.sidebar.markdown(f"**Catégorie** : {method['category']}")
     st.sidebar.markdown(f"**Description** : {method['description_short']}")
 
+    # Section de paramètres modulables
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ⚙️ Budget de Privacy (Modulable)")
+
+    # Paramètres dynamiques selon la méthode
+    dynamic_params = {}
+
+    if method_key in ["Random Add/Del", "Random Switch"]:
+        k_value = st.sidebar.slider(
+            "k = Nombre de modifications",
+            min_value=5,
+            max_value=50,
+            value=method['params']['k'],
+            step=5,
+            help="Nombre d'arêtes à modifier (ajout/suppression ou échange)"
+        )
+        dynamic_params['k'] = k_value
+
+    elif method_key == "k-degree anonymity":
+        k_value = st.sidebar.slider(
+            "k = Taille minimale des groupes",
+            min_value=2,
+            max_value=10,
+            value=method['params']['k'],
+            step=1,
+            help="Nombre minimum de nœuds ayant le même degré"
+        )
+        dynamic_params['k'] = k_value
+
+    elif method_key == "Generalization":
+        k_value = st.sidebar.slider(
+            "k = Taille minimale des clusters",
+            min_value=2,
+            max_value=10,
+            value=method['params']['k'],
+            step=1,
+            help="Nombre minimum de nœuds dans chaque cluster"
+        )
+        dynamic_params['k'] = k_value
+
+    elif method_key == "Probabilistic":
+        k_value = st.sidebar.slider(
+            "k = Nombre de graphes candidats",
+            min_value=3,
+            max_value=15,
+            value=method['params']['k'],
+            step=1,
+            help="Nombre minimum de graphes plausibles"
+        )
+        epsilon_value = st.sidebar.slider(
+            "ε = Marge d'entropie",
+            min_value=0.1,
+            max_value=1.0,
+            value=method['params']['epsilon'],
+            step=0.1,
+            help="Tolérance dans l'incertitude (plus petit = plus de privacy)"
+        )
+        dynamic_params['k'] = k_value
+        dynamic_params['epsilon'] = epsilon_value
+
+    elif method_key in ["EdgeFlip", "Laplace"]:
+        epsilon_value = st.sidebar.slider(
+            "ε = Budget de Privacy",
+            min_value=0.1,
+            max_value=3.0,
+            value=method['params']['epsilon'],
+            step=0.1,
+            help="Budget de privacy différentielle (plus petit = plus de privacy, moins d'utilité)"
+        )
+        dynamic_params['epsilon'] = epsilon_value
+
+        # Afficher l'impact du budget
+        privacy_loss = np.exp(epsilon_value)
+        if epsilon_value < 1.0:
+            st.sidebar.success(f"✅ Privacy Forte (perte ≤ {privacy_loss:.2f}x)")
+        elif epsilon_value < 2.0:
+            st.sidebar.warning(f"⚠️ Privacy Moyenne (perte ≤ {privacy_loss:.2f}x)")
+        else:
+            st.sidebar.error(f"❌ Privacy Faible (perte ≤ {privacy_loss:.2f}x)")
+
     # Bouton pour anonymiser
     st.sidebar.markdown("---")
     if st.sidebar.button("🚀 Anonymiser le Graphe", type="primary"):
         st.session_state.anonymized = True
         st.session_state.method_key = method_key
+        st.session_state.method_params = dynamic_params  # Sauvegarder les paramètres utilisés
 
         # Anonymiser
         anonymizer = GraphAnonymizer(G)
@@ -1082,20 +1366,20 @@ def main():
         with st.spinner('Anonymisation en cours...'):
             node_to_cluster = None
             if method_key == "Random Add/Del":
-                G_anon = anonymizer.random_add_del(**method['params'])
+                G_anon = anonymizer.random_add_del(**dynamic_params)
             elif method_key == "Random Switch":
-                G_anon = anonymizer.random_switch(**method['params'])
+                G_anon = anonymizer.random_switch(**dynamic_params)
             elif method_key == "k-degree anonymity":
-                G_anon = anonymizer.k_degree_anonymity(**method['params'])
+                G_anon = anonymizer.k_degree_anonymity(**dynamic_params)
             elif method_key == "Generalization":
-                G_anon, node_to_cluster = anonymizer.generalization(**method['params'])
+                G_anon, node_to_cluster = anonymizer.generalization(**dynamic_params)
                 st.session_state.node_to_cluster = node_to_cluster
             elif method_key == "Probabilistic":
-                G_anon = anonymizer.probabilistic_obfuscation(**method['params'])
+                G_anon = anonymizer.probabilistic_obfuscation(**dynamic_params)
             elif method_key == "EdgeFlip":
-                G_anon = anonymizer.differential_privacy_edgeflip(**method['params'])
+                G_anon = anonymizer.differential_privacy_edgeflip(**dynamic_params)
             elif method_key == "Laplace":
-                G_anon = anonymizer.differential_privacy_laplace(**method['params'])
+                G_anon = anonymizer.differential_privacy_laplace(**dynamic_params)
 
             st.session_state.G_anon = G_anon
             st.session_state.G_orig = G
@@ -1108,8 +1392,17 @@ def main():
         G_anon = st.session_state.G_anon
         current_method = METHODS[st.session_state.method_key]
 
-        # Onglets
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Résultats", "📖 Explications", "📈 Métriques", "🛡️ Attaques & Garanties", "ℹ️ Anonymisation"])
+        # Onglets - VERSION AMÉLIORÉE avec 8 onglets
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            "📊 Résultats",
+            "📖 Définitions",
+            "📈 Métriques Utilité",
+            "🔒 Métriques Privacy",
+            "🎯 Simulations d'Attaques",
+            "🛡️ Attaques & Garanties",
+            "📚 Dict. Attaques",
+            "🔍 Dict. Propriétés"
+        ])
 
         with tab1:
             st.markdown("## 📊 Résultats de l'Anonymisation")
@@ -1159,262 +1452,394 @@ def main():
             st.pyplot(fig_dist)
 
         with tab2:
-            st.markdown(f"## 📖 Explication Détaillée : {current_method['name']}")
+            st.markdown("## 📖 Définitions des Concepts d'Anonymisation")
 
-            # Bouton pour afficher/masquer les explications
-            if st.button("📚 Afficher l'Explication Complète"):
-                st.session_state.show_explanation = not st.session_state.get('show_explanation', False)
+            st.markdown("""
+            Cette section présente les définitions formelles et intuitions pour chaque type d'anonymisation.
+            Choisissez un concept ci-dessous pour voir sa définition complète.
+            """)
 
-            if st.session_state.get('show_explanation', False):
+            st.markdown("---")
+
+            # Sélecteur de concept
+            concept_keys = list(ANONYMIZATION_DEFINITIONS.keys())
+            concept_names = [ANONYMIZATION_DEFINITIONS[k]['name'] for k in concept_keys]
+
+            selected_concept_name = st.selectbox(
+                "Choisir un concept à explorer",
+                concept_names
+            )
+
+            # Trouver la clé correspondante
+            selected_concept_key = concept_keys[concept_names.index(selected_concept_name)]
+            concept = ANONYMIZATION_DEFINITIONS[selected_concept_key]
+
+            st.markdown(f"### {concept['name']}")
+
+            with st.expander("📝 Définition Formelle", expanded=True):
+                st.markdown(concept['definition'])
+                st.markdown("**Formule mathématique** :")
+                st.code(concept['math_formula'], language="text")
+
+            with st.expander("💡 Intuition (Explication en langage naturel)", expanded=True):
+                st.markdown(concept['intuition'])
+
+            with st.expander("🔒 Garantie de Privacy"):
+                st.info(f"**Garantie** : {concept['privacy_guarantee']}")
+
+            with st.expander("⚙️ Signification des Paramètres"):
+                st.markdown(concept['parameter_meaning'])
+
+            st.markdown("---")
+            st.markdown(f"### 🔬 Méthode Actuelle : {current_method['name']}")
+
+            with st.expander("📚 Explication de la méthode actuelle"):
                 st.markdown(current_method['description'])
-
-                st.markdown("---")
-                st.markdown("### 🔢 Formule Clé")
+                st.markdown("**Formule** :")
                 st.latex(current_method['formula'])
 
-                st.markdown("---")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown("### 🔒 Niveau de Privacy")
+                    st.markdown("**🔒 Niveau de Privacy**")
                     st.info(current_method['privacy_level'])
                 with col2:
-                    st.markdown("### 📊 Préservation de l'Utilité")
+                    st.markdown("**📊 Préservation de l'Utilité**")
                     st.info(current_method['utility_preservation'])
 
         with tab3:
-            st.markdown("## 📈 Métriques d'Anonymisation Détaillées")
+            st.markdown("## 📈 Métriques d'Utilité du Graphe")
 
-            metrics = calculate_anonymization_metrics(G_orig, G_anon)
+            st.markdown("""
+            Ces métriques mesurent la **préservation de l'utilité** du graphe après anonymisation.
+            Plus ces métriques sont proches du graphe original, mieux l'utilité est préservée.
+            """)
 
-            if metrics:
+            utility_metrics = calculate_utility_metrics(G_orig, G_anon)
+
+            if utility_metrics.get('comparable', True):
+                st.markdown("### 📊 Métriques de Base")
+
                 col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
-                    st.metric("Arêtes Ajoutées", metrics.get('edges_added', 'N/A'))
+                    st.metric("Nœuds", utility_metrics.get('num_nodes', 'N/A'))
                 with col2:
-                    st.metric("Arêtes Supprimées", metrics.get('edges_removed', 'N/A'))
+                    st.metric("Arêtes", utility_metrics.get('num_edges', 'N/A'))
                 with col3:
-                    st.metric("Arêtes Préservées", metrics.get('edges_preserved', 'N/A'))
+                    orig_density = nx.density(G_orig)
+                    anon_density = utility_metrics.get('density', 0)
+                    delta_density = anon_density - orig_density
+                    st.metric("Densité", f"{anon_density:.3f}", delta=f"{delta_density:+.3f}")
                 with col4:
-                    rate = metrics.get('modification_rate', 0)
-                    st.metric("Taux de Modification", f"{rate*100:.1f}%")
+                    if utility_metrics.get('avg_clustering') is not None:
+                        orig_clust = nx.average_clustering(G_orig)
+                        anon_clust = utility_metrics['avg_clustering']
+                        delta_clust = anon_clust - orig_clust
+                        st.metric("Clustering Moyen", f"{anon_clust:.3f}", delta=f"{delta_clust:+.3f}")
 
                 st.markdown("---")
+                st.markdown("### 🌐 Métriques Globales")
 
                 col1, col2, col3 = st.columns(3)
 
                 with col1:
-                    if 'total_degree_change' in metrics:
-                        st.metric("Changement Total de Degrés", f"{metrics['total_degree_change']}")
+                    if utility_metrics.get('diameter') is not None:
+                        try:
+                            if nx.is_connected(G_orig):
+                                orig_diam = nx.diameter(G_orig)
+                            else:
+                                largest_cc = max(nx.connected_components(G_orig), key=len)
+                                orig_diam = nx.diameter(G_orig.subgraph(largest_cc))
+                            delta_diam = utility_metrics['diameter'] - orig_diam
+                            st.metric("Diamètre", utility_metrics['diameter'], delta=f"{delta_diam:+d}")
+                        except:
+                            st.metric("Diamètre", utility_metrics['diameter'])
 
                 with col2:
-                    if 'nodes_with_degree_change' in metrics:
-                        st.metric("Nœuds avec Degré Modifié", metrics['nodes_with_degree_change'])
+                    if utility_metrics.get('avg_shortest_path') is not None:
+                        try:
+                            if nx.is_connected(G_orig):
+                                orig_asp = nx.average_shortest_path_length(G_orig)
+                            else:
+                                largest_cc = max(nx.connected_components(G_orig), key=len)
+                                orig_asp = nx.average_shortest_path_length(G_orig.subgraph(largest_cc))
+                            delta_asp = utility_metrics['avg_shortest_path'] - orig_asp
+                            st.metric("Chemin Moyen", f"{utility_metrics['avg_shortest_path']:.2f}", delta=f"{delta_asp:+.2f}")
+                        except:
+                            st.metric("Chemin Moyen", f"{utility_metrics['avg_shortest_path']:.2f}")
 
                 with col3:
-                    if 'degree_preservation_rate' in metrics:
-                        st.metric("Taux de Préservation des Degrés",
-                                 f"{metrics['degree_preservation_rate']*100:.1f}%")
+                    if utility_metrics.get('degree_correlation') is not None:
+                        st.metric("Corrélation des Degrés", f"{utility_metrics['degree_correlation']:.3f}",
+                                 help="Coefficient de Spearman : 1 = parfait, 0 = aucune corrélation")
 
                 st.markdown("---")
+                st.markdown("### 📉 Trade-off Utilité vs Modifications")
+
+                metrics = calculate_anonymization_metrics(G_orig, G_anon)
+
+                if metrics:
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Modifications des Arêtes**")
+                        added = metrics.get('edges_added', 0)
+                        removed = metrics.get('edges_removed', 0)
+                        preserved = metrics.get('edges_preserved', 0)
+
+                        df_edges = pd.DataFrame({
+                            'Type': ['Préservées', 'Ajoutées', 'Supprimées'],
+                            'Nombre': [preserved, added, removed]
+                        })
+                        st.bar_chart(df_edges.set_index('Type'))
+
+                    with col2:
+                        st.markdown("**Taux de Modification**")
+                        rate = metrics.get('modification_rate', 0)
+                        st.progress(min(rate, 1.0))
+                        st.metric("Taux de modification", f"{rate*100:.1f}%")
+
+                        if rate < 0.1:
+                            st.success("✅ Utilité très bien préservée")
+                        elif rate < 0.3:
+                            st.info("ℹ️ Utilité correctement préservée")
+                        else:
+                            st.warning("⚠️ Modifications importantes")
+
+            else:
+                st.info("Graphe de type super-nodes : métriques d'utilité non directement comparables")
+
+        with tab4:
+            st.markdown("## 🔒 Métriques de Privacy")
+
+            st.markdown("""
+            Ces métriques quantifient la **protection de la vie privée** offerte par l'anonymisation.
+            Plus ces valeurs sont élevées, meilleure est la protection.
+            """)
+
+            method_params = st.session_state.get('method_params', {})
+            privacy_metrics = calculate_privacy_metrics_separated(G_orig, G_anon, st.session_state.method_key, method_params)
+
+            if privacy_metrics:
+                st.markdown("### 🛡️ Garanties de Privacy")
+
+                if 'k_value' in privacy_metrics:
+                    # k-anonymity
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric("k requis", privacy_metrics['k_value'])
+                    with col2:
+                        st.metric("Ensemble d'anonymat min.", privacy_metrics['min_anonymity_set'])
+                    with col3:
+                        satisfies = privacy_metrics['satisfies_k_anonymity']
+                        if satisfies:
+                            st.success(f"✅ {privacy_metrics['k_value']}-anonymité satisfaite")
+                        else:
+                            st.error(f"❌ {privacy_metrics['k_value']}-anonymité NON satisfaite")
+
+                    st.markdown("---")
+                    prob = privacy_metrics['re_identification_probability']
+                    st.markdown(f"**Probabilité de ré-identification** : {prob:.3f} ({prob*100:.1f}%)")
+
+                    st.progress(1 - prob)
+
+                    if prob < 0.2:
+                        st.success("✅ Risque de ré-identification faible")
+                    elif prob < 0.5:
+                        st.warning("⚠️ Risque de ré-identification modéré")
+                    else:
+                        st.error("❌ Risque de ré-identification élevé")
+
+                elif 'epsilon_budget' in privacy_metrics:
+                    # Differential Privacy
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        eps = privacy_metrics['epsilon_budget']
+                        st.metric("ε (epsilon) Budget", f"{eps:.2f}")
+
+                    with col2:
+                        loss = privacy_metrics['privacy_loss_bound']
+                        st.metric("Borne de perte de privacy", f"e^{eps:.2f} = {loss:.2f}x")
+
+                    with col3:
+                        level = privacy_metrics['privacy_level']
+                        if "Forte" in level:
+                            st.success(f"✅ {level}")
+                        elif "Moyenne" in level:
+                            st.warning(f"⚠️ {level}")
+                        else:
+                            st.error(f"❌ {level}")
+
+                    st.markdown("---")
+
+                    if 'flip_probability' in privacy_metrics:
+                        st.markdown("### 🎲 EdgeFlip - Paramètres de Randomisation")
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            flip_prob = privacy_metrics['flip_probability']
+                            st.metric("Probabilité de flip", f"{flip_prob:.3f}")
+
+                        with col2:
+                            expected_noise = privacy_metrics['expected_noise_edges']
+                            st.metric("Arêtes bruitées (attendu)", expected_noise)
+
+                elif 'k_candidates' in privacy_metrics:
+                    # Probabilistic
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric("k graphes candidats", privacy_metrics['k_candidates'])
+
+                    with col2:
+                        st.metric("ε tolérance", f"{privacy_metrics['epsilon_tolerance']:.2f}")
+
+                    with col3:
+                        entropy = privacy_metrics['min_entropy']
+                        st.metric("Entropie minimale", f"{entropy:.2f}")
+
+                    st.markdown("---")
+                    confusion = privacy_metrics['confusion_factor']
+                    st.info(f"**Facteur de confusion** : {confusion} graphes plausibles")
+
+                elif 'min_cluster_size' in privacy_metrics:
+                    # Generalization
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric("Taille min. cluster", int(privacy_metrics['min_cluster_size']))
+
+                    with col2:
+                        st.metric("Taille moy. cluster", f"{privacy_metrics['avg_cluster_size']:.1f}")
+
+                    with col3:
+                        max_priv = privacy_metrics['max_privacy']
+                        st.metric("Prob. max ré-identification", f"{max_priv:.3f}")
+
+                st.markdown("---")
+
+                # Garanties globales
+                guarantees = calculate_privacy_guarantees(G_orig, G_anon, st.session_state.method_key, method_params)
+
+                if guarantees:
+                    st.markdown("### 📋 Garanties Détaillées")
+
+                    with st.expander("Voir toutes les garanties"):
+                        for key, value in guarantees.items():
+                            st.text(f"{key}: {value}")
+
+            else:
+                st.info("Aucune métrique de privacy spécifique pour cette méthode")
+
+        with tab5:
+            st.markdown("## 🎯 Simulations d'Attaques Réelles")
+
+            st.markdown("""
+            Cette section simule des attaques de **ré-identification** sur le graphe anonymisé.
+            Ces simulations montrent concrètement si un adversaire peut retrouver des nœuds spécifiques.
+            """)
+
+            st.markdown("---")
+
+            # Sélection du nœud cible
+            st.markdown("### 🎯 Configuration de l'Attaque")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                target_node = st.number_input(
+                    "Nœud cible à retrouver",
+                    min_value=0,
+                    max_value=G_orig.number_of_nodes()-1,
+                    value=0,
+                    help="Le nœud que l'adversaire essaie de ré-identifier"
+                )
+
+            with col2:
+                attack_type = st.selectbox(
+                    "Type d'attaque",
+                    ["Degree Attack", "Subgraph Attack (Triangles)"]
+                )
+
+            st.markdown("---")
+
+            if st.button("🚀 Lancer l'Attaque"):
+                st.markdown("### 📊 Résultats de l'Attaque")
+
+                with st.spinner("Simulation en cours..."):
+                    if attack_type == "Degree Attack":
+                        results = simulate_degree_attack(G_orig, G_anon, target_node)
+                    else:
+                        results = simulate_subgraph_attack(G_orig, G_anon, target_node)
+
+                if results['success']:
+                    st.error("### ⚠️ Attaque Réussie !")
+                    st.markdown(results['explanation'])
+
+                    st.markdown(f"**Nœud ré-identifié** : {results.get('re_identified_node', 'N/A')}")
+
+                else:
+                    st.success("### ✅ Attaque Échouée / Partiellement Réussie")
+                    st.markdown(results['explanation'])
+
+                st.markdown("---")
+                st.markdown("### 📈 Détails Techniques")
 
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    if metrics.get('clustering_change') is not None:
-                        st.metric("Changement de Clustering",
-                                 f"{metrics['clustering_change']:.4f}")
+                    st.markdown("**Nœud cible** :")
+                    st.info(f"Nœud {target_node}")
+
+                    if 'target_degree' in results:
+                        st.markdown("**Degré du nœud** :")
+                        st.info(f"Degré = {results['target_degree']}")
+
+                    if 'target_triangles' in results:
+                        st.markdown("**Triangles** :")
+                        st.info(f"{results['target_triangles']} triangles")
 
                 with col2:
-                    st.metric("Changement de Densité",
-                             f"{metrics['density_change']:.4f}")
+                    st.markdown("**Candidats trouvés** :")
+                    if results['candidates']:
+                        st.info(f"{len(results['candidates'])} nœuds : {results['candidates'][:10]}")
+                    else:
+                        st.info("Aucun candidat")
 
-            # Nouvelles métriques de garanties
+                    if len(results['candidates']) > 1:
+                        prob_success = 1 / len(results['candidates'])
+                        st.markdown("**Probabilité de succès** :")
+                        st.warning(f"{prob_success*100:.1f}%")
+
             st.markdown("---")
-            st.markdown("## 🔐 Garanties de Privacy")
 
-            guarantees = calculate_privacy_guarantees(G_orig, G_anon,
-                                                     st.session_state.method_key,
-                                                     current_method['params'])
-
-            if guarantees:
-                if st.session_state.method_key == "k-degree anonymity":
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        is_satisfied = guarantees.get('k_anonymity_satisfied', False)
-                        st.metric("k-Anonymité Satisfaite", "✅ Oui" if is_satisfied else "❌ Non")
-                    with col2:
-                        st.metric("Minimum de Nœuds par Degré", guarantees.get('min_degree_count', 'N/A'))
-                    with col3:
-                        st.metric("Risque de Ré-identification", guarantees.get('re_identification_risk', 'N/A'))
-
-                elif st.session_state.method_key == "Generalization":
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Nombre de Clusters", guarantees.get('num_clusters', 'N/A'))
-                    with col2:
-                        st.metric("Taille Min/Moy/Max", f"{guarantees.get('min_cluster_size', '?')}/{guarantees.get('avg_cluster_size', '?')}/{guarantees.get('max_cluster_size', '?')}")
-                    with col3:
-                        st.metric("Risque de Ré-identification", guarantees.get('re_identification_risk', 'N/A'))
-                    with col4:
-                        st.metric("Perte d'Information", guarantees.get('information_loss', 'N/A'))
-
-                    st.markdown("---")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Arêtes Intra-Cluster", f"{guarantees.get('intra_cluster_edges', 0)} ({guarantees.get('intra_ratio', 'N/A')})")
-                    with col2:
-                        st.metric("Arêtes Inter-Cluster", f"{guarantees.get('inter_cluster_edges', 0)} ({guarantees.get('inter_ratio', 'N/A')})")
-
-                elif st.session_state.method_key in ["EdgeFlip", "Laplace"]:
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Budget ε (Epsilon)", guarantees.get('epsilon', 'N/A'))
-                    with col2:
-                        st.metric("Niveau de Privacy", guarantees.get('privacy_level', 'N/A'))
-                    with col3:
-                        st.metric("Perte Max de Privacy", guarantees.get('max_privacy_loss', 'N/A'))
-
-                    if st.session_state.method_key == "EdgeFlip":
-                        st.markdown("---")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Taux Faux Positifs Attendu", guarantees.get('expected_false_positive_rate', 'N/A'))
-                        with col2:
-                            st.metric("Taux Faux Négatifs Attendu", guarantees.get('expected_false_negative_rate', 'N/A'))
-
-                elif st.session_state.method_key == "Probabilistic":
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("k-Voisinage", guarantees.get('k_neighborhood', 'N/A'))
-                    with col2:
-                        st.metric("Tolérance ε", guarantees.get('epsilon_tolerance', 'N/A'))
-                    with col3:
-                        st.metric("Entropie Minimale", guarantees.get('min_entropy', 'N/A'))
-
-                elif st.session_state.method_key == "Random Switch":
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        preserved = guarantees.get('degree_sequence_preserved', False)
-                        st.metric("Séquence de Degrés Préservée", "✅ Oui" if preserved else "❌ Non")
-                    with col2:
-                        st.metric("Propriété Structurelle", guarantees.get('structural_property', 'N/A'))
-
-                elif st.session_state.method_key == "Random Add/Del":
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Budget de Modification (k)", guarantees.get('modification_budget', 'N/A'))
-                    with col2:
-                        st.metric("Incertitude Structurelle", guarantees.get('structural_uncertainty', 'N/A'))
-
-        with tab4:
-            st.markdown("## ℹ️ Comprendre le Taux d'Anonymisation")
-
-            if st.button("❓ Qu'est-ce que l'Anonymisation ?"):
-                st.session_state.show_anon_info = not st.session_state.get('show_anon_info', False)
-
-            if st.session_state.get('show_anon_info', False):
+            # Section éducative
+            with st.expander("📚 En savoir plus sur ces attaques"):
                 st.markdown("""
-                ### 🎯 Définition du Taux d'Anonymisation
+                ### Degree Attack (Attaque par Degré)
 
-                Le **taux d'anonymisation** quantifie à quel point le graphe a été modifié
-                pour protéger la vie privée. Il n'y a pas une seule mesure universelle,
-                mais plusieurs indicateurs :
+                L'adversaire connaît le degré (nombre de connexions) du nœud cible et cherche
+                dans le graphe anonymisé tous les nœuds ayant ce degré.
 
-                #### 1. **Taux de Modification des Arêtes**
+                **Protection** :
+                - k-degree anonymity garantit au moins k nœuds par degré
+                - Randomisation modifie les degrés
+                - Differential Privacy ajoute du bruit
 
-                ```
-                Taux = (Arêtes Ajoutées + Arêtes Supprimées) / (2 × Arêtes Originales)
-                ```
+                ### Subgraph Attack (Attaque par Sous-graphe)
 
-                - **0%** : Aucune modification (pas d'anonymisation)
-                - **50%** : Modification substantielle
-                - **100%** : Graphe complètement différent
+                L'adversaire connaît la structure locale autour du nœud (ex: triangles, motifs).
+                Cette attaque est plus puissante car elle exploite plus d'information.
 
-                **Interprétation** : Plus ce taux est élevé, plus l'attaquant aura du mal
-                à retrouver la structure originale, mais plus l'utilité du graphe sera dégradée.
-
-                ---
-
-                #### 2. **Incorrectness (Taux d'Erreur)**
-
-                Mesure combien de nœuds ne peuvent plus être ré-identifiés correctement
-                par leur degré :
-
-                ```
-                Incorrectness = Nœuds avec Degré Modifié / Nombre Total de Nœuds
-                ```
-
-                - **0%** : Tous les degrés préservés (ex: Random Switch)
-                - **50%** : La moitié des nœuds protégés
-                - **100%** : Tous les nœuds protégés
-
-                **Exemple** : Si un attaquant connaît que Alice a 5 amis, mais qu'après
-                anonymisation elle en a 7, il ne pourra pas la retrouver.
-
-                ---
-
-                #### 3. **Entropie de Shannon**
-
-                Mesure l'incertitude moyenne dans l'identification :
-
-                ```
-                H = -∑ p_i log₂(p_i)
-                ```
-
-                où p_i est la probabilité qu'un attaquant assigne au nœud i.
-
-                - **H = 0** : Certitude complète (pas de privacy)
-                - **H = log₂(k)** : k nœuds également probables (k-anonymity)
-                - **H = log₂(n)** : Tous les nœuds également probables (anonymat complet)
-
-                ---
-
-                #### 4. **Budget de Privacy (ε en Differential Privacy)**
-
-                Pour les méthodes basées sur la privacy différentielle :
-
-                - **ε < 0.1** : Privacy très forte, forte distorsion
-                - **ε ∈ [0.1, 1]** : Privacy forte, distorsion modérée
-                - **ε ∈ [1, 10]** : Privacy modérée, faible distorsion
-                - **ε > 10** : Privacy faible, très faible distorsion
-
-                **Garantie mathématique** : La probabilité qu'un attaquant distingue
-                deux graphes voisins est bornée par e^ε.
-
-                ---
-
-                ### 🔄 Trade-off Privacy vs Utilité
-
-                Il existe toujours un compromis :
-
-                | Anonymisation | Privacy | Utilité |
-                |---------------|---------|---------|
-                | Très Faible   | ⭐      | ⭐⭐⭐⭐⭐ |
-                | Faible        | ⭐⭐    | ⭐⭐⭐⭐   |
-                | Moyenne       | ⭐⭐⭐  | ⭐⭐⭐    |
-                | Forte         | ⭐⭐⭐⭐ | ⭐⭐     |
-                | Très Forte    | ⭐⭐⭐⭐⭐| ⭐      |
-
-                **Objectif** : Trouver le bon équilibre selon le cas d'usage !
-
-                ---
-
-                ### 📊 Comparaison des Méthodes
-
-                | Méthode | Taux Modification | Incorrectness | Type de Garantie |
-                |---------|------------------|---------------|------------------|
-                | Random Add/Del | Moyen (20-30%) | Moyen | Aucune formelle |
-                | Random Switch | Nul (0%) | Nul | Degrés préservés |
-                | k-degree | Faible (10-20%) | Élevé | k-anonymity |
-                | Généralisation | Très élevé | Très élevé | k-anonymity |
-                | Probabiliste | Élevé (50%+) | Élevé | Entropie > seuil |
-                | Differential Privacy | Variable | Variable | ε-DP |
-
-                **Note** : Les valeurs exactes dépendent des paramètres choisis (k, ε, etc.)
+                **Protection** :
+                - Generalization détruit les motifs locaux
+                - Differential Privacy ajoute/supprime des triangles fictifs
+                - Randomisation casse certains motifs
                 """)
 
-        with tab5:
+        with tab6:
             st.markdown(f"## 🛡️ Attaques et Garanties : {current_method['name']}")
 
             method_details = ATTACKS_AND_GUARANTEES.get(st.session_state.method_key, {})
@@ -1459,6 +1884,183 @@ def main():
                     st.info("Exemple à venir pour cette méthode.")
             else:
                 st.warning("Informations détaillées non disponibles pour cette méthode.")
+
+        with tab7:
+            st.markdown("## 📚 Dictionnaire des Attaques de Ré-Identification")
+
+            st.markdown("""
+            Ce dictionnaire présente **toutes les attaques connues** contre les graphes anonymisés,
+            avec des exemples concrets et des explications détaillées.
+            """)
+
+            st.markdown("---")
+
+            # Liste des attaques
+            attack_names = [ATTACKS_DICTIONARY[k]['name'] for k in ATTACKS_DICTIONARY.keys()]
+
+            selected_attack_name = st.selectbox(
+                "Choisir une attaque à explorer",
+                attack_names
+            )
+
+            # Trouver l'attaque correspondante
+            selected_attack_key = list(ATTACKS_DICTIONARY.keys())[attack_names.index(selected_attack_name)]
+            attack = ATTACKS_DICTIONARY[selected_attack_key]
+
+            st.markdown(f"### {attack['name']}")
+
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                with st.expander("📝 Description de l'Attaque", expanded=True):
+                    st.markdown(attack['description'])
+
+                with st.expander("💡 Exemple Concret"):
+                    st.markdown(attack['example'])
+
+            with col2:
+                st.markdown("**⚠️ Sévérité**")
+                severity = attack['severity']
+                if "Très élevée" in severity or "Élevée" in severity:
+                    st.error(severity)
+                elif "Moyenne" in severity:
+                    st.warning(severity)
+                else:
+                    st.info(severity)
+
+                st.markdown("**🛡️ Protection**")
+                st.success(attack['protection'])
+
+            st.markdown("---")
+
+            # Exemples concrets sur Karate Club
+            st.markdown("### 🥋 Exemples Concrets sur Karate Club")
+
+            example_keys = list(CONCRETE_ATTACK_EXAMPLES.keys())
+
+            for example_key in example_keys:
+                example = CONCRETE_ATTACK_EXAMPLES[example_key]
+
+                with st.expander(f"📖 {example['title']}"):
+                    st.markdown(f"**Scénario** : {example['scenario']}")
+
+                    st.markdown("**Étapes de l'attaque** :")
+                    for step in example['steps']:
+                        st.markdown(f"- {step}")
+
+                    st.markdown("---")
+                    st.markdown("**Taux de Succès** :")
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric("Sans protection", example.get('success_rate_no_protection', 'N/A'))
+
+                    with col2:
+                        if 'success_rate_k_anonymity' in example:
+                            st.metric("Avec k-anonymity", example['success_rate_k_anonymity'])
+                        elif 'success_rate_randomization' in example:
+                            st.metric("Avec randomization", example['success_rate_randomization'])
+
+                    with col3:
+                        if 'success_rate_differential_privacy' in example:
+                            st.metric("Avec Diff. Privacy", example['success_rate_differential_privacy'])
+                        elif 'success_rate_generalization' in example:
+                            st.metric("Avec Generalization", example['success_rate_generalization'])
+
+                    if 'code_simulation' in example:
+                        with st.expander("💻 Code de Simulation"):
+                            st.code(example['code_simulation'], language='python')
+
+        with tab8:
+            st.markdown("## 🔍 Dictionnaire des Propriétés de Graphes")
+
+            st.markdown("""
+            Ce dictionnaire explique **toutes les propriétés de graphes** utilisées en anonymisation,
+            leur importance pour l'utilité, et leur risque pour la privacy.
+            """)
+
+            st.markdown("---")
+
+            # Liste des propriétés
+            property_names = [GRAPH_PROPERTIES[k]['name'] for k in GRAPH_PROPERTIES.keys()]
+
+            selected_property_name = st.selectbox(
+                "Choisir une propriété à explorer",
+                property_names
+            )
+
+            # Trouver la propriété correspondante
+            selected_property_key = list(GRAPH_PROPERTIES.keys())[property_names.index(selected_property_name)]
+            prop = GRAPH_PROPERTIES[selected_property_key]
+
+            st.markdown(f"### {prop['name']}")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                with st.expander("📝 Définition", expanded=True):
+                    st.markdown(prop['definition'])
+
+                with st.expander("🔢 Formule"):
+                    st.code(prop['formula'], language='text')
+
+                with st.expander("💡 Exemple"):
+                    st.info(prop['example'])
+
+            with col2:
+                st.markdown("**📊 Importance pour l'Utilité**")
+                importance = prop['utility_importance']
+                if "Critique" in importance or "Élevée" in importance:
+                    st.success(importance)
+                else:
+                    st.info(importance)
+
+                st.markdown("**⚠️ Risque pour la Privacy**")
+                risk = prop['privacy_risk']
+                if "Élevé" in risk:
+                    st.error(risk)
+                elif "Moyen" in risk:
+                    st.warning(risk)
+                else:
+                    st.success(risk)
+
+            st.markdown("---")
+
+            # Calcul des propriétés sur le graphe actuel
+            if isinstance(G_anon, nx.Graph):
+                st.markdown("### 📊 Valeurs pour le Graphe Actuel")
+
+                try:
+                    if selected_property_key == 'degree':
+                        degrees = dict(G_anon.degree())
+                        st.metric("Degré moyen", f"{np.mean(list(degrees.values())):.2f}")
+                        st.metric("Degré max", max(degrees.values()))
+
+                    elif selected_property_key == 'clustering_coefficient':
+                        clustering = nx.average_clustering(G_anon)
+                        st.metric("Coefficient de clustering moyen", f"{clustering:.3f}")
+
+                    elif selected_property_key == 'density':
+                        density = nx.density(G_anon)
+                        st.metric("Densité", f"{density:.3f}")
+
+                    elif selected_property_key == 'diameter':
+                        if nx.is_connected(G_anon):
+                            diameter = nx.diameter(G_anon)
+                            st.metric("Diamètre", diameter)
+                        else:
+                            st.info("Graphe non connexe, diamètre non défini")
+
+                    elif selected_property_key == 'average_path_length':
+                        if nx.is_connected(G_anon):
+                            apl = nx.average_shortest_path_length(G_anon)
+                            st.metric("Longueur moyenne des chemins", f"{apl:.2f}")
+                        else:
+                            st.info("Graphe non connexe, calculé sur la plus grande composante")
+
+                except Exception as e:
+                    st.warning(f"Calcul non disponible pour ce graphe")
 
     else:
         st.info("👈 Sélectionnez une méthode et cliquez sur 'Anonymiser le Graphe' pour commencer")
