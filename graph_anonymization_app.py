@@ -1028,7 +1028,69 @@ def plot_degree_distribution(G_orig, G_anon, method_name):
 
 
 def simulate_degree_attack(G_orig, G_anon, target_node=0):
-    """Simule une attaque par degré sur le graphe"""
+    """
+    Simule une ATTAQUE PAR DEGRÉ (Degree Attack) sur le graphe anonymisé.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    PRINCIPE DE L'ATTAQUE :
+    ═══════════════════════════════════════════════════════════════════════════
+    L'adversaire connaît le DEGRÉ (nombre d'amis/connexions) d'un nœud cible
+    dans le graphe original et tente de le retrouver dans le graphe anonymisé
+    en cherchant les nœuds ayant le même degré.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    EXEMPLE CONCRET (Karate Club) :
+    ═══════════════════════════════════════════════════════════════════════════
+    - Alice (instructrice) a 16 amis dans le club (information publique)
+    - L'attaquant cherche dans le graphe anonymisé tous les nœuds de degré 16
+    - Si UN SEUL nœud a degré 16 → Alice est ré-identifiée avec 100% de certitude
+    - Si k nœuds ont degré 16 → Probabilité de ré-identification = 1/k
+
+    ═══════════════════════════════════════════════════════════════════════════
+    MÉTRIQUES DE PRIVACY CALCULÉES :
+    ═══════════════════════════════════════════════════════════════════════════
+    1. INCORRECTNESS : Nombre de fausses suppositions de l'attaquant
+       → Plus cette valeur est élevée, meilleure est la privacy
+       → Incorrectness = k - 1 (k candidats signifie k-1 erreurs potentielles)
+
+    2. MIN ENTROPY : log₂(k) bits
+       → Mesure l'incertitude de l'attaquant
+       → 0 bits = aucune privacy (1 candidat)
+       → 1 bit = privacy faible (2 candidats)
+       → 3 bits = privacy moyenne (8 candidats)
+       → 5+ bits = bonne privacy (32+ candidats)
+
+    3. PROBABILITÉ DE RÉ-IDENTIFICATION : 1/k
+       → Chance que l'attaquant devine correctement au hasard
+
+    ═══════════════════════════════════════════════════════════════════════════
+    PARAMÈTRES :
+    ═══════════════════════════════════════════════════════════════════════════
+    G_orig : networkx.Graph
+        Graphe original (avant anonymisation)
+    G_anon : networkx.Graph ou autre
+        Graphe après anonymisation
+    target_node : int
+        Nœud que l'attaquant cherche à ré-identifier (par défaut : nœud 0)
+
+    ═══════════════════════════════════════════════════════════════════════════
+    RETOURNE :
+    ═══════════════════════════════════════════════════════════════════════════
+    dict contenant:
+        - attack_type : Type d'attaque ('Degree Attack')
+        - target_node : Nœud ciblé
+        - target_degree : Degré du nœud cible
+        - candidates : Liste des nœuds candidats dans le graphe anonymisé
+        - success : True si ré-identification réussie (1 seul candidat)
+        - re_identification_probability : 1/nombre_candidats
+        - incorrectness : Nombre de fausses suppositions (k-1)
+        - min_entropy_bits : log₂(k) bits de privacy
+        - explanation : Explication textuelle du résultat
+    """
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # INITIALISATION DES RÉSULTATS
+    # ═══════════════════════════════════════════════════════════════════════
     results = {
         'attack_type': 'Degree Attack',
         'target_node': target_node,
@@ -1037,35 +1099,201 @@ def simulate_degree_attack(G_orig, G_anon, target_node=0):
         'explanation': ''
     }
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # VÉRIFICATION : L'attaque n'est possible que sur des graphes classiques
+    # (pas sur les super-nœuds de la généralisation)
+    # ═══════════════════════════════════════════════════════════════════════
     if not isinstance(G_anon, nx.Graph):
-        results['explanation'] = "Attaque impossible sur ce type de graphe (super-nodes)"
+        results['explanation'] = "⚠️ Attaque impossible sur ce type de graphe (super-nodes). La généralisation détruit les degrés individuels."
+        results['incorrectness'] = float('inf')  # Privacy parfaite
+        results['min_entropy_bits'] = float('inf')
+        results['re_identification_probability'] = 0.0
         return results
 
-    # Degré du nœud cible dans le graphe original
+    # ═══════════════════════════════════════════════════════════════════════
+    # ÉTAPE 1 : CONNAISSANCE DE L'ATTAQUANT
+    # ═══════════════════════════════════════════════════════════════════════
+    # L'attaquant connaît le degré du nœud cible dans le graphe ORIGINAL
+    # (par exemple via un profil public, un annuaire, ou sa propre connaissance)
     target_degree = G_orig.degree(target_node)
 
-    # Chercher les nœuds ayant ce degré dans le graphe anonymisé
+    # ═══════════════════════════════════════════════════════════════════════
+    # ÉTAPE 2 : RECHERCHE DES CANDIDATS
+    # ═══════════════════════════════════════════════════════════════════════
+    # L'attaquant cherche TOUS les nœuds du graphe anonymisé ayant le même degré
     candidates = [n for n in G_anon.nodes() if G_anon.degree(n) == target_degree]
+
+    k = len(candidates)  # Nombre de nœuds indistinguables (anonymity set size)
 
     results['candidates'] = candidates
     results['target_degree'] = target_degree
 
-    if len(candidates) == 1:
+    # ═══════════════════════════════════════════════════════════════════════
+    # ÉTAPE 3 : CALCUL DES MÉTRIQUES DE PRIVACY
+    # ═══════════════════════════════════════════════════════════════════════
+
+    if k == 1:
+        # CAS 1 : RÉ-IDENTIFICATION RÉUSSIE (Privacy = 0)
+        # Un seul candidat → L'attaquant est CERTAIN de l'identité
         results['success'] = True
         results['re_identified_node'] = candidates[0]
-        results['explanation'] = f"✅ Ré-identification réussie ! Le nœud {target_node} a un degré unique ({target_degree}). Un seul nœud candidat trouvé."
-    elif len(candidates) == 0:
+        results['re_identification_probability'] = 1.0  # 100% de certitude
+        results['incorrectness'] = 0  # Aucune fausse supposition possible
+        results['min_entropy_bits'] = 0.0  # Aucune incertitude (log₂(1) = 0)
+        results['explanation'] = (
+            f"✅ **RÉ-IDENTIFICATION RÉUSSIE !**\n\n"
+            f"Le nœud cible {target_node} a un degré UNIQUE ({target_degree} connexions).\n"
+            f"Un seul nœud dans le graphe anonymisé a ce degré.\n\n"
+            f"📊 **Métriques de Privacy** :\n"
+            f"- Probabilité de ré-identification : **100%** (certitude absolue)\n"
+            f"- Incorrectness : **0** (aucune erreur possible)\n"
+            f"- Min Entropy : **0 bits** (aucune privacy)\n\n"
+            f"🔴 **DANGER** : L'attaquant peut maintenant découvrir toutes les connexions du nœud {target_node} !"
+        )
+
+    elif k == 0:
+        # CAS 2 : AUCUN CANDIDAT TROUVÉ
+        # Le degré a été modifié par l'anonymisation (randomisation, DP, etc.)
         results['success'] = False
-        results['explanation'] = f"❌ Aucun nœud avec degré {target_degree} trouvé (le degré a été modifié)."
+        results['re_identification_probability'] = 0.0
+        results['incorrectness'] = float('inf')  # Protection parfaite
+        results['min_entropy_bits'] = float('inf')
+        results['explanation'] = (
+            f"❌ **ATTAQUE ÉCHOUÉE - Aucun candidat**\n\n"
+            f"Aucun nœud avec degré {target_degree} trouvé dans le graphe anonymisé.\n"
+            f"Le degré du nœud cible a été modifié par l'anonymisation.\n\n"
+            f"📊 **Métriques de Privacy** :\n"
+            f"- Probabilité de ré-identification : **0%**\n"
+            f"- Incorrectness : **∞** (impossible de deviner)\n"
+            f"- Min Entropy : **∞ bits** (privacy maximale)\n\n"
+            f"🟢 **SÉCURITÉ** : Excellente protection contre cette attaque !"
+        )
+
     else:
+        # CAS 3 : RÉ-IDENTIFICATION AMBIGUË (k-anonymity)
+        # Plusieurs candidats → L'attaquant doit deviner parmi k nœuds
         results['success'] = False
-        results['explanation'] = f"⚠️ Ré-identification ambiguë : {len(candidates)} nœuds ont le degré {target_degree}. Probabilité de succès : {1/len(candidates)*100:.1f}%"
+        results['re_identification_probability'] = 1.0 / k
+        results['incorrectness'] = k - 1  # Nombre de fausses suppositions
+        results['min_entropy_bits'] = np.log2(k)  # Bits de privacy
+
+        # Évaluation qualitative de la privacy
+        if k >= 10:
+            privacy_level = "🟢 FORTE"
+            privacy_comment = "Excellente protection"
+        elif k >= 5:
+            privacy_level = "🟡 MOYENNE"
+            privacy_comment = "Protection acceptable"
+        else:
+            privacy_level = "🟠 FAIBLE"
+            privacy_comment = "Protection limitée"
+
+        results['explanation'] = (
+            f"⚠️ **RÉ-IDENTIFICATION AMBIGUË**\n\n"
+            f"{k} nœuds ont le degré {target_degree} dans le graphe anonymisé.\n"
+            f"L'attaquant doit deviner au hasard parmi ces {k} candidats.\n\n"
+            f"📊 **Métriques de Privacy** :\n"
+            f"- Probabilité de ré-identification : **{1/k*100:.1f}%** (1/{k})\n"
+            f"- Incorrectness : **{k-1}** fausses suppositions possibles\n"
+            f"- Min Entropy : **{np.log2(k):.2f} bits** de privacy\n"
+            f"- Niveau de privacy : {privacy_level}\n\n"
+            f"💡 **Interprétation** : {privacy_comment}. "
+            f"Le graphe satisfait la **{k}-anonymité** pour ce nœud."
+        )
 
     return results
 
 
 def simulate_subgraph_attack(G_orig, G_anon, target_node=0):
-    """Simule une attaque par sous-graphe (recherche de triangles)"""
+    """
+    Simule une ATTAQUE PAR SOUS-GRAPHE (Subgraph/Neighborhood Attack) sur le graphe.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    PRINCIPE DE L'ATTAQUE :
+    ═══════════════════════════════════════════════════════════════════════════
+    L'adversaire connaît la STRUCTURE LOCALE autour du nœud cible, notamment :
+    - Le nombre de connexions (degré)
+    - Les TRIANGLES formés avec ses voisins (amis communs)
+    - Le coefficient de clustering (densité du voisinage)
+
+    Cette attaque est BEAUCOUP PLUS PUISSANTE que l'attaque par degré seul,
+    car elle exploite des MOTIFS STRUCTURELS (patterns) qui sont souvent uniques.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    EXEMPLE CONCRET (Karate Club) :
+    ═══════════════════════════════════════════════════════════════════════════
+    - Mr. Hi (nœud 0) a 16 amis ET forme 45 triangles avec eux
+    - Pattern : [degré=16, triangles=45]
+    - L'attaquant cherche ce pattern dans le graphe anonymisé
+    - Ce pattern est souvent UNIQUE → Ré-identification réussie
+
+    Comparaison avec Degree Attack :
+    - Degree Attack : Cherche seulement "degré = 16"
+      → Peut trouver plusieurs candidats (k-anonymity)
+    - Subgraph Attack : Cherche "degré = 16 ET 45 triangles"
+      → Pattern beaucoup plus distinctif → Moins de candidats
+
+    ═══════════════════════════════════════════════════════════════════════════
+    PROTECTION CONTRE CETTE ATTAQUE :
+    ═══════════════════════════════════════════════════════════════════════════
+    🟢 GÉNÉRALISATION (Super-nœuds) : ★★★★★
+       → Détruit complètement les motifs locaux en regroupant les nœuds
+       → L'attaque devient IMPOSSIBLE
+
+    🟢 DIFFERENTIAL PRIVACY : ★★★★☆
+       → Ajoute/supprime des triangles de manière aléatoire
+       → Brouille les patterns structurels
+
+    🟠 RANDOMISATION : ★★☆☆☆
+       → Peut préserver certains triangles
+       → Protection limitée
+
+    🔴 k-DEGREE ANONYMITY : ★☆☆☆☆
+       → Ne protège que le degré, pas les triangles
+       → VULNÉRABLE à cette attaque
+
+    ═══════════════════════════════════════════════════════════════════════════
+    MÉTRIQUES DE PRIVACY CALCULÉES :
+    ═══════════════════════════════════════════════════════════════════════════
+    1. STRUCTURAL QUERY H2 : (degré, nombre_triangles)
+       → Décrit la structure locale du nœud
+
+    2. INCORRECTNESS : k - 1 (nombre de fausses suppositions)
+
+    3. MIN ENTROPY : log₂(k) bits d'incertitude
+
+    4. PROBABILITÉ DE RÉ-IDENTIFICATION : 1/k
+
+    ═══════════════════════════════════════════════════════════════════════════
+    PARAMÈTRES :
+    ═══════════════════════════════════════════════════════════════════════════
+    G_orig : networkx.Graph
+        Graphe original (avant anonymisation)
+    G_anon : networkx.Graph ou autre
+        Graphe après anonymisation
+    target_node : int
+        Nœud que l'attaquant cherche à ré-identifier
+
+    ═══════════════════════════════════════════════════════════════════════════
+    RETOURNE :
+    ═══════════════════════════════════════════════════════════════════════════
+    dict contenant:
+        - attack_type : 'Subgraph Attack'
+        - target_node : Nœud ciblé
+        - target_degree : Degré du nœud cible
+        - target_triangles : Nombre de triangles formés par le nœud
+        - clustering_coefficient : Coefficient de clustering
+        - candidates : Liste des nœuds candidats
+        - success : True si ré-identification unique
+        - re_identification_probability : 1/k
+        - incorrectness : k-1
+        - min_entropy_bits : log₂(k)
+        - explanation : Explication détaillée
+    """
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # INITIALISATION DES RÉSULTATS
+    # ═══════════════════════════════════════════════════════════════════════
     results = {
         'attack_type': 'Subgraph Attack',
         'target_node': target_node,
@@ -1074,51 +1302,157 @@ def simulate_subgraph_attack(G_orig, G_anon, target_node=0):
         'explanation': ''
     }
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # VÉRIFICATION : L'attaque nécessite des graphes avec structure locale
+    # ═══════════════════════════════════════════════════════════════════════
     if not isinstance(G_anon, nx.Graph):
-        results['explanation'] = "Attaque impossible sur ce type de graphe (super-nodes)"
+        results['explanation'] = (
+            "⚠️ **Attaque impossible sur ce type de graphe (super-nodes)**\n\n"
+            "La GÉNÉRALISATION détruit les motifs locaux (triangles, voisinages).\n"
+            "C'est justement la FORCE de cette méthode contre les attaques structurelles !\n\n"
+            "🟢 Protection : **EXCELLENTE** (★★★★★)"
+        )
+        results['incorrectness'] = float('inf')
+        results['min_entropy_bits'] = float('inf')
+        results['re_identification_probability'] = 0.0
         return results
 
-    # Trouver les triangles contenant le nœud cible dans le graphe original
+    # ═══════════════════════════════════════════════════════════════════════
+    # ÉTAPE 1 : ANALYSER LA STRUCTURE LOCALE DU NŒUD CIBLE (Graphe Original)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # Compter les TRIANGLES dont le nœud fait partie
+    # Un triangle = 3 nœuds tous connectés entre eux (A-B, B-C, A-C)
     target_triangles = []
     for u, v in G_orig.edges(target_node):
+        # Si u et v sont aussi connectés → triangle [target, u, v]
         if G_orig.has_edge(u, v):
             target_triangles.append(sorted([target_node, u, v]))
 
+    # Si le nœud n'a aucun triangle, l'attaque structurelle est limitée
     if not target_triangles:
-        results['explanation'] = f"Le nœud {target_node} ne fait partie d'aucun triangle."
+        results['explanation'] = (
+            f"⚠️ Le nœud {target_node} ne fait partie d'AUCUN triangle.\n\n"
+            f"Cette attaque nécessite des motifs structurels (triangles).\n"
+            f"Utilisez plutôt une **Degree Attack** pour ce nœud."
+        )
         return results
 
-    # Caractéristiques du nœud : degré + nombre de triangles
+    # Caractéristiques structurelles du nœud cible
     target_degree = G_orig.degree(target_node)
     target_triangle_count = len(target_triangles)
 
-    # Chercher les nœuds avec des caractéristiques similaires
+    # Coefficient de clustering : proportion de voisins connectés entre eux
+    try:
+        target_clustering = nx.clustering(G_orig, target_node)
+    except:
+        target_clustering = 0.0
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # ÉTAPE 2 : RECHERCHER LE PATTERN STRUCTUREL DANS LE GRAPHE ANONYMISÉ
+    # ═══════════════════════════════════════════════════════════════════════
+    # L'attaquant cherche les nœuds ayant le MÊME PATTERN : (degré, triangles)
+
     candidates = []
     for n in G_anon.nodes():
+        # Filtrer d'abord par degré (critère rapide)
         if G_anon.degree(n) == target_degree:
-            # Compter les triangles pour ce nœud
+            # Compter les triangles pour ce nœud candidat
             node_triangles = 0
             for u, v in G_anon.edges(n):
                 if G_anon.has_edge(u, v):
                     node_triangles += 1
 
+            # Si le nombre de triangles correspond aussi → Candidat potentiel !
             if node_triangles == target_triangle_count:
                 candidates.append(n)
+
+    k = len(candidates)  # Taille de l'ensemble d'anonymat
 
     results['candidates'] = candidates
     results['target_degree'] = target_degree
     results['target_triangles'] = target_triangle_count
+    results['clustering_coefficient'] = target_clustering
 
-    if len(candidates) == 1:
+    # ═══════════════════════════════════════════════════════════════════════
+    # ÉTAPE 3 : ÉVALUATION DU SUCCÈS DE L'ATTAQUE
+    # ═══════════════════════════════════════════════════════════════════════
+
+    if k == 1:
+        # CAS 1 : PATTERN UNIQUE → RÉ-IDENTIFICATION RÉUSSIE
         results['success'] = True
         results['re_identified_node'] = candidates[0]
-        results['explanation'] = f"✅ Ré-identification réussie ! Pattern unique : degré {target_degree}, {target_triangle_count} triangles."
-    elif len(candidates) == 0:
+        results['re_identification_probability'] = 1.0
+        results['incorrectness'] = 0
+        results['min_entropy_bits'] = 0.0
+        results['explanation'] = (
+            f"✅ **RÉ-IDENTIFICATION RÉUSSIE !**\n\n"
+            f"Le pattern structurel du nœud {target_node} est UNIQUE :\n"
+            f"- Degré : **{target_degree}** connexions\n"
+            f"- Triangles : **{target_triangle_count}**\n"
+            f"- Clustering : **{target_clustering:.3f}**\n\n"
+            f"Un seul nœud dans le graphe anonymisé possède ce pattern.\n\n"
+            f"📊 **Métriques de Privacy** :\n"
+            f"- Probabilité de ré-identification : **100%**\n"
+            f"- Incorrectness : **0** (certitude absolue)\n"
+            f"- Min Entropy : **0 bits**\n\n"
+            f"🔴 **DANGER** : L'attaque structurelle est PLUS PUISSANTE que l'attaque par degré.\n"
+            f"💡 **Protection recommandée** : Généralisation ou Differential Privacy"
+        )
+
+    elif k == 0:
+        # CAS 2 : AUCUN CANDIDAT → STRUCTURE MODIFIÉE
         results['success'] = False
-        results['explanation'] = f"❌ Aucun nœud correspondant (structure modifiée)."
+        results['re_identification_probability'] = 0.0
+        results['incorrectness'] = float('inf')
+        results['min_entropy_bits'] = float('inf')
+        results['explanation'] = (
+            f"❌ **ATTAQUE ÉCHOUÉE - Structure modifiée**\n\n"
+            f"Aucun nœud ne correspond au pattern recherché :\n"
+            f"- Degré : {target_degree}\n"
+            f"- Triangles : {target_triangle_count}\n\n"
+            f"L'anonymisation a modifié la structure locale du graphe.\n\n"
+            f"📊 **Métriques de Privacy** :\n"
+            f"- Probabilité de ré-identification : **0%**\n"
+            f"- Incorrectness : **∞**\n"
+            f"- Min Entropy : **∞ bits**\n\n"
+            f"🟢 **SÉCURITÉ** : Excellente protection contre cette attaque structurelle !"
+        )
+
     else:
+        # CAS 3 : PLUSIEURS CANDIDATS → AMBIGUÏTÉ
         results['success'] = False
-        results['explanation'] = f"⚠️ {len(candidates)} candidats avec pattern similaire. Probabilité : {1/len(candidates)*100:.1f}%"
+        results['re_identification_probability'] = 1.0 / k
+        results['incorrectness'] = k - 1
+        results['min_entropy_bits'] = np.log2(k)
+
+        # Évaluation qualitative
+        if k >= 8:
+            privacy_level = "🟢 FORTE"
+            protection_comment = "Excellente protection structurelle"
+        elif k >= 4:
+            privacy_level = "🟡 MOYENNE"
+            protection_comment = "Protection acceptable"
+        else:
+            privacy_level = "🟠 FAIBLE"
+            protection_comment = "Protection limitée - Pattern encore distinctif"
+
+        results['explanation'] = (
+            f"⚠️ **RÉ-IDENTIFICATION AMBIGUË**\n\n"
+            f"{k} nœuds partagent le pattern structurel :\n"
+            f"- Degré : **{target_degree}**\n"
+            f"- Triangles : **{target_triangle_count}**\n"
+            f"- Clustering : **{target_clustering:.3f}**\n\n"
+            f"L'attaquant doit deviner parmi {k} candidats.\n\n"
+            f"📊 **Métriques de Privacy** :\n"
+            f"- Probabilité de ré-identification : **{1/k*100:.1f}%** (1/{k})\n"
+            f"- Incorrectness : **{k-1}** fausses suppositions\n"
+            f"- Min Entropy : **{np.log2(k):.2f} bits**\n"
+            f"- Niveau de privacy : {privacy_level}\n\n"
+            f"💡 **Interprétation** : {protection_comment}.\n\n"
+            f"⚠️ **Note** : Cette attaque est plus discriminante qu'une simple Degree Attack.\n"
+            f"Pour une meilleure protection, utilisez la Généralisation ou Differential Privacy."
+        )
 
     return results
 
