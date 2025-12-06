@@ -200,26 +200,56 @@ class GraphAnonymizer:
         return super_graph, node_to_cluster
 
     def probabilistic_obfuscation(self, k=5, epsilon=0.3):
-        """(k,ε)-obfuscation optimisé"""
+        """
+        (k,ε)-obfuscation basé sur la thèse de Nguyen Huu-Hiep
+
+        ═══════════════════════════════════════════════════════════════════════
+        PRINCIPE (selon la thèse, Section 3.3.3) :
+        ═══════════════════════════════════════════════════════════════════════
+        - On transfère de la probabilité des arêtes EXISTANTES vers des
+          arêtes POTENTIELLES (non-existantes)
+        - Plus ε est GRAND → Plus on transfère de probabilité → Plus de privacy
+        - Plus k est GRAND → Plus de graphes candidats plausibles
+
+        FORMULE (simplifiée pour l'implémentation) :
+        - Arêtes existantes : prob = 1 - r_e où r_e augmente avec ε
+        - Arêtes potentielles : prob = r_e où r_e augmente avec ε
+
+        CORRECTION : ε GRAND = PLUS DE PRIVACY (et non l'inverse !)
+        ═══════════════════════════════════════════════════════════════════════
+        """
         G = self.original_graph.copy()
         prob_graph = nx.Graph()
         prob_graph.add_nodes_from(G.nodes())
 
-        # Arêtes existantes avec haute probabilité
-        for u, v in G.edges():
-            prob_graph.add_edge(u, v, probability=1.0 - epsilon/k, is_original=True)
+        # Calculer r_e (taux de transfert de probabilité)
+        # Plus ε est grand, plus r_e est grand, plus on transfère de probabilité
+        # Formule ajustée pour avoir un bon gradient visuel
+        r_e = min(0.5, epsilon / (k + 1))  # Borné à 0.5 pour éviter prob < 0.5
 
-        # Ajouter des arêtes potentielles
+        # Alternative : utiliser directement epsilon comme dans la thèse
+        # mais avec un scaling pour avoir un meilleur gradient visuel
+        r_e = epsilon * 0.4  # Scaling factor pour avoir des valeurs visibles
+
+        # Arêtes EXISTANTES : probabilité diminue quand ε augmente
+        # (on "transfère" de la probabilité vers les arêtes potentielles)
+        for u, v in G.edges():
+            prob_existing = 1.0 - r_e  # Plus ε grand → r_e grand → prob petite
+            prob_graph.add_edge(u, v, probability=prob_existing, is_original=True)
+
+        # Ajouter des arêtes POTENTIELLES
         non_edges = [(u, v) for u in G.nodes() for v in G.nodes()
                      if u < v and not G.has_edge(u, v)]
 
-        # Ajouter ~30% des non-arêtes
-        num_to_add = int(len(non_edges) * 0.3)
+        # Nombre d'arêtes potentielles : augmente avec k (plus de candidats)
+        # et avec ε (plus de confusion)
+        num_to_add = min(int(len(non_edges) * 0.4), int(G.number_of_edges() * (k / 5)))
         edges_to_add = random.sample(non_edges, min(num_to_add, len(non_edges)))
 
+        # Arêtes POTENTIELLES : probabilité augmente quand ε augmente
         for u, v in edges_to_add:
-            prob = epsilon / (2 * k)
-            prob_graph.add_edge(u, v, probability=prob, is_original=False)
+            prob_potential = r_e  # Plus ε grand → r_e grand → prob grande
+            prob_graph.add_edge(u, v, probability=prob_potential, is_original=False)
 
         return prob_graph
 
@@ -1812,12 +1842,12 @@ def main():
             help="Nombre minimum de graphes plausibles"
         )
         epsilon_value = st.sidebar.slider(
-            "ε = Marge d'entropie",
+            "ε = Taux de transfert de probabilité",
             min_value=0.1,
             max_value=1.0,
             value=method['params']['epsilon'],
             step=0.1,
-            help="Tolérance dans l'incertitude (plus petit = plus de privacy)"
+            help="⚠️ ATTENTION : Plus ε est GRAND, plus on transfère de probabilité des arêtes existantes vers les potentielles → PLUS DE PRIVACY ! (ε=0.1: faible privacy, ε=1.0: forte privacy)"
         )
         dynamic_params['k'] = k_value
         dynamic_params['epsilon'] = epsilon_value
