@@ -1807,57 +1807,219 @@ def simulate_subgraph_attack(G_orig, G_anon, target_node=0):
 
 
 def calculate_utility_metrics(G_orig, G_anon):
-    """Calcule les métriques d'utilité du graphe"""
+    """
+    Calcule les métriques d'utilité selon la thèse (Section 3.5.2).
+
+    ═══════════════════════════════════════════════════════════════════════════
+    MÉTRIQUES D'UTILITÉ (selon la thèse, lignes 2503-2636) :
+    ═══════════════════════════════════════════════════════════════════════════
+
+    3 GROUPES DE STATISTIQUES :
+
+    1. DEGREE-BASED (statistiques basées sur les degrés) :
+       - Nombre d'arêtes (S_NE)
+       - Degré moyen (S_AD)
+       - Degré maximal (S_MD)
+       - Variance des degrés (S_DV)
+       - Exposant power-law (S_PL)
+
+    2. SHORTEST PATH-BASED (statistiques basées sur les chemins) :
+       - Distance moyenne (S_APD)
+       - Diamètre effectif - 90e percentile (S_EDiam)
+       - Longueur de connectivité - moyenne harmonique (S_CL)
+       - Diamètre (S_Diam)
+
+    3. CLUSTERING :
+       - Coefficient de clustering (S_CC) = 3 × triangles / triples connectés
+
+    CAS SPÉCIAUX :
+    - Graphes PROBABILISTES : Calculer sur ÉCHANTILLONS (sample graphs)
+    - GÉNÉRALISATION (super-graphe) : Calculer sur le SUPER-GRAPHE directement
+    ═══════════════════════════════════════════════════════════════════════════
+    """
     metrics = {}
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # CAS 1 : SUPER-GRAPHE (Généralisation)
+    # ═══════════════════════════════════════════════════════════════════════
     if not isinstance(G_anon, nx.Graph):
+        # Pour la généralisation, retourner qu'on ne peut pas comparer
+        # (structure complètement différente)
         return {'type': 'super-graph', 'comparable': False}
 
-    # Métriques de base
-    metrics['num_nodes'] = G_anon.number_of_nodes()
-    metrics['num_edges'] = G_anon.number_of_edges()
-    metrics['density'] = nx.density(G_anon)
+    # ═══════════════════════════════════════════════════════════════════════
+    # CAS 2 : GRAPHE PROBABILISTE → Échantillonner d'abord
+    # ═══════════════════════════════════════════════════════════════════════
+    is_probabilistic = False
+    if G_anon.number_of_edges() > 0:
+        first_edge = list(G_anon.edges())[0]
+        is_probabilistic = 'probability' in G_anon[first_edge[0]][first_edge[1]]
 
-    # Clustering
+    if is_probabilistic:
+        # Générer un échantillon déterministe depuis le graphe probabiliste
+        G_sample = sample_from_probabilistic_graph(G_anon)
+        metrics['is_sample'] = True
+        metrics['probabilistic_edges'] = G_anon.number_of_edges()
+    else:
+        G_sample = G_anon
+        metrics['is_sample'] = False
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # GROUPE 1 : DEGREE-BASED STATISTICS
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # S_NE : Nombre d'arêtes
+    metrics['num_edges'] = G_sample.number_of_edges()
+    metrics['num_nodes'] = G_sample.number_of_nodes()
+
+    # Calculer les degrés
+    degrees = [d for n, d in G_sample.degree()]
+
+    # S_AD : Degré moyen
+    metrics['avg_degree'] = np.mean(degrees) if degrees else 0
+
+    # S_MD : Degré maximal
+    metrics['max_degree'] = max(degrees) if degrees else 0
+
+    # S_DV : Variance des degrés
+    metrics['degree_variance'] = np.var(degrees) if degrees else 0
+
+    # S_PL : Exposant power-law
+    # On estime γ (gamma) de la distribution P(k) ∝ k^(-γ)
     try:
-        metrics['avg_clustering'] = nx.average_clustering(G_anon)
+        from scipy.stats import linregress
+        # Compter la distribution des degrés
+        degree_counts = Counter(degrees)
+        degrees_unique = sorted([d for d in degree_counts.keys() if d > 0])
+        counts = [degree_counts[d] for d in degrees_unique]
+
+        if len(degrees_unique) >= 3:
+            # Régression log-log : log(P(k)) = -γ × log(k) + C
+            log_degrees = np.log(degrees_unique)
+            log_counts = np.log(counts)
+            slope, intercept, r_value, p_value, std_err = linregress(log_degrees, log_counts)
+            metrics['power_law_exponent'] = -slope  # γ = -slope
+            metrics['power_law_r_squared'] = r_value ** 2
+        else:
+            metrics['power_law_exponent'] = None
+            metrics['power_law_r_squared'] = None
     except:
-        metrics['avg_clustering'] = None
+        metrics['power_law_exponent'] = None
+        metrics['power_law_r_squared'] = None
 
-    # Centralité moyenne
-    try:
-        degree_centrality = nx.degree_centrality(G_anon)
-        metrics['avg_degree_centrality'] = np.mean(list(degree_centrality.values()))
-    except:
-        metrics['avg_degree_centrality'] = None
+    # Densité (métrique additionnelle)
+    metrics['density'] = nx.density(G_sample)
 
-    # Diamètre (si graphe connexe)
+    # ═══════════════════════════════════════════════════════════════════════
+    # GROUPE 2 : SHORTEST PATH-BASED STATISTICS
+    # ═══════════════════════════════════════════════════════════════════════
+
     try:
-        if nx.is_connected(G_anon):
-            metrics['diameter'] = nx.diameter(G_anon)
-            metrics['avg_shortest_path'] = nx.average_shortest_path_length(G_anon)
+        if nx.is_connected(G_sample):
+            # S_Diam : Diamètre
+            metrics['diameter'] = nx.diameter(G_sample)
+
+            # S_APD : Distance moyenne
+            metrics['avg_shortest_path'] = nx.average_shortest_path_length(G_sample)
+
+            # S_EDiam : Diamètre effectif (90e percentile)
+            # Calculer toutes les distances
+            all_paths = dict(nx.all_pairs_shortest_path_length(G_sample))
+            all_distances = []
+            for source in all_paths:
+                for target, dist in all_paths[source].items():
+                    if source != target:
+                        all_distances.append(dist)
+
+            if all_distances:
+                metrics['effective_diameter'] = np.percentile(all_distances, 90)
+
+                # S_CL : Longueur de connectivité (moyenne harmonique)
+                # CL = n(n-1) / Σ(1/d(u,v))
+                harmonic_sum = sum([1.0/d for d in all_distances if d > 0])
+                n = G_sample.number_of_nodes()
+                metrics['connectivity_length'] = n * (n-1) / harmonic_sum if harmonic_sum > 0 else None
+            else:
+                metrics['effective_diameter'] = None
+                metrics['connectivity_length'] = None
         else:
             # Prendre la plus grande composante connexe
-            largest_cc = max(nx.connected_components(G_anon), key=len)
-            subgraph = G_anon.subgraph(largest_cc)
+            largest_cc = max(nx.connected_components(G_sample), key=len)
+            subgraph = G_sample.subgraph(largest_cc)
+
             metrics['diameter'] = nx.diameter(subgraph)
             metrics['avg_shortest_path'] = nx.average_shortest_path_length(subgraph)
+
+            # Pour effective diameter et connectivity length sur la LCC
+            all_paths = dict(nx.all_pairs_shortest_path_length(subgraph))
+            all_distances = []
+            for source in all_paths:
+                for target, dist in all_paths[source].items():
+                    if source != target:
+                        all_distances.append(dist)
+
+            if all_distances:
+                metrics['effective_diameter'] = np.percentile(all_distances, 90)
+                harmonic_sum = sum([1.0/d for d in all_distances if d > 0])
+                n_lcc = subgraph.number_of_nodes()
+                metrics['connectivity_length'] = n_lcc * (n_lcc-1) / harmonic_sum if harmonic_sum > 0 else None
+            else:
+                metrics['effective_diameter'] = None
+                metrics['connectivity_length'] = None
     except:
         metrics['diameter'] = None
         metrics['avg_shortest_path'] = None
+        metrics['effective_diameter'] = None
+        metrics['connectivity_length'] = None
 
-    # Préservation de la distribution des degrés
+    # ═══════════════════════════════════════════════════════════════════════
+    # GROUPE 3 : CLUSTERING COEFFICIENT
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # S_CC : Clustering coefficient = 3 × triangles / triples connectés
+    try:
+        # Compter les triangles
+        triangles = sum(nx.triangles(G_sample).values()) / 3  # Divisé par 3 car chaque triangle compté 3 fois
+
+        # Compter les triples connectés (chemins de longueur 2)
+        connected_triples = 0
+        for node in G_sample.nodes():
+            degree = G_sample.degree(node)
+            # Chaque nœud de degré k crée k(k-1)/2 triples
+            connected_triples += degree * (degree - 1) / 2
+
+        if connected_triples > 0:
+            metrics['clustering_coefficient'] = (3 * triangles) / connected_triples
+        else:
+            metrics['clustering_coefficient'] = 0
+
+        # Clustering moyen (métrique alternative)
+        metrics['avg_clustering'] = nx.average_clustering(G_sample)
+    except:
+        metrics['clustering_coefficient'] = None
+        metrics['avg_clustering'] = None
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # MÉTRIQUES ADDITIONNELLES : Préservation de la structure
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # Corrélation des séquences de degrés (Spearman)
     orig_degrees = sorted([d for n, d in G_orig.degree()])
-    anon_degrees = sorted([d for n, d in G_anon.degree()])
+    sample_degrees = sorted([d for n, d in G_sample.degree()])
 
-    if len(orig_degrees) == len(anon_degrees):
-        # Corrélation de Spearman
+    if len(orig_degrees) == len(sample_degrees):
         from scipy.stats import spearmanr
         try:
-            corr, _ = spearmanr(orig_degrees, anon_degrees)
+            corr, _ = spearmanr(orig_degrees, sample_degrees)
             metrics['degree_correlation'] = corr
         except:
             metrics['degree_correlation'] = None
+    else:
+        metrics['degree_correlation'] = None
+
+    # Erreur relative moyenne (comme dans la thèse)
+    # rel.err = |S(G0) - S(G)| / S(G0)
+    metrics['comparable'] = True
 
     return metrics
 
