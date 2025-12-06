@@ -837,8 +837,146 @@ def calculate_privacy_guarantees(G_orig, G_anon, method_key, method_params):
     return guarantees
 
 
+def sample_from_probabilistic_graph(prob_graph):
+    """
+    Tire un échantillon de graphe déterministe depuis un graphe probabiliste.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    PRINCIPE DU TIRAGE (SAMPLING) :
+    ═══════════════════════════════════════════════════════════════════════════
+    Dans un graphe probabiliste (k,ε)-obfuscation, chaque arête a une PROBABILITÉ
+    d'existence. Pour créer un graphe déterministe, on effectue un TIRAGE au sort
+    pour chaque arête :
+
+    - Si prob(arête) = 0.95 → 95% de chance d'apparaître dans l'échantillon
+    - Si prob(arête) = 0.10 → 10% de chance d'apparaître dans l'échantillon
+
+    Ce mécanisme permet de :
+    1. Publier plusieurs graphes échantillons différents
+    2. Créer de la confusion pour l'attaquant (plusieurs graphes plausibles)
+    3. Garantir que l'attaquant ne peut pas identifier le graphe original avec certitude
+
+    ═══════════════════════════════════════════════════════════════════════════
+    Paramètres:
+        prob_graph : networkx.Graph avec attributs 'probability' sur les arêtes
+
+    Retourne:
+        networkx.Graph : Graphe déterministe échantillonné
+    ═══════════════════════════════════════════════════════════════════════════
+    """
+    import random
+
+    # Créer un nouveau graphe avec les mêmes nœuds
+    sampled_graph = nx.Graph()
+    sampled_graph.add_nodes_from(prob_graph.nodes())
+
+    # Pour chaque arête du graphe probabiliste
+    for u, v in prob_graph.edges():
+        # Récupérer la probabilité
+        prob = prob_graph[u][v].get('probability', 0.5)
+
+        # Tirer au sort : l'arête apparaît si random < prob
+        if random.random() < prob:
+            sampled_graph.add_edge(u, v)
+
+    return sampled_graph
+
+
+def plot_probabilistic_graph(prob_graph, G_orig, method_name, ax):
+    """
+    Visualise un graphe probabiliste avec des arêtes de différentes intensités.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    PRINCIPE DE LA VISUALISATION :
+    ═══════════════════════════════════════════════════════════════════════════
+    Dans un graphe probabiliste (k,ε)-obfuscation :
+    - Les arêtes EXISTANTES ont une probabilité ÉLEVÉE (≈ 1 - ε/k) → FONCÉES
+    - Les arêtes POTENTIELLES ont une probabilité FAIBLE (≈ ε/2k) → CLAIRES
+
+    Cette visualisation utilise :
+    1. INTENSITÉ DE COULEUR : Plus la probabilité est élevée, plus l'arête est foncée
+    2. ÉPAISSEUR : Les arêtes à haute probabilité sont plus épaisses
+    3. LÉGENDE : Code couleur pour interpréter les probabilités
+
+    ═══════════════════════════════════════════════════════════════════════════
+    """
+    import matplotlib.cm as cm
+    from matplotlib.colors import LinearSegmentedColormap
+
+    # Position pour visualisation
+    pos = nx.spring_layout(G_orig, seed=42, k=0.5, iterations=50)
+
+    # Dessiner les nœuds
+    nx.draw_networkx_nodes(prob_graph, pos, ax=ax,
+                          node_color='lightcyan',
+                          node_size=500, alpha=0.9,
+                          edgecolors='darkblue', linewidths=2)
+
+    # Collecter les arêtes par probabilité
+    edges_with_prob = []
+    for u, v in prob_graph.edges():
+        prob = prob_graph[u][v].get('probability', 0.5)
+        is_orig = prob_graph[u][v].get('is_original', False)
+        edges_with_prob.append(((u, v), prob, is_orig))
+
+    if not edges_with_prob:
+        nx.draw_networkx_labels(prob_graph, pos, ax=ax, font_size=8, font_weight='bold')
+        return
+
+    # Trier par probabilité pour dessiner les faibles d'abord
+    edges_with_prob.sort(key=lambda x: x[1])
+
+    # Créer un colormap du clair (prob faible) au foncé (prob élevée)
+    cmap = cm.get_cmap('RdYlGn')  # Rouge (faible) -> Jaune (moyen) -> Vert (élevé)
+
+    # Dessiner chaque arête avec sa couleur et épaisseur
+    for (u, v), prob, is_orig in edges_with_prob:
+        # Couleur basée sur la probabilité
+        color = cmap(prob)
+
+        # Épaisseur basée sur la probabilité
+        width = 0.5 + 3.5 * prob  # De 0.5 (prob=0) à 4.0 (prob=1)
+
+        # Style : solide pour arêtes originales, pointillé pour potentielles
+        style = 'solid' if is_orig else 'dotted'
+
+        # Transparence basée sur la probabilité
+        alpha = 0.3 + 0.6 * prob  # De 0.3 à 0.9
+
+        nx.draw_networkx_edges(prob_graph, pos, [(u, v)], ax=ax,
+                              edge_color=[color], width=width,
+                              style=style, alpha=alpha)
+
+    # Labels des nœuds
+    nx.draw_networkx_labels(prob_graph, pos, ax=ax, font_size=8, font_weight='bold')
+
+    # Créer une légende explicative
+    from matplotlib.patches import Rectangle
+    from matplotlib.lines import Line2D
+
+    legend_elements = [
+        Line2D([0], [0], color=cmap(0.95), linewidth=4, label='Prob. très élevée (≈ 95%)'),
+        Line2D([0], [0], color=cmap(0.70), linewidth=3, label='Prob. élevée (≈ 70%)'),
+        Line2D([0], [0], color=cmap(0.50), linewidth=2, label='Prob. moyenne (≈ 50%)'),
+        Line2D([0], [0], color=cmap(0.30), linewidth=1.5, label='Prob. faible (≈ 30%)'),
+        Line2D([0], [0], color=cmap(0.10), linewidth=1, linestyle='dotted', label='Prob. très faible (≈ 10%)'),
+    ]
+
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.9)
+    ax.set_title(f'{method_name}\nGraphe Probabiliste ({prob_graph.number_of_nodes()} nœuds, {prob_graph.number_of_edges()} arêtes)',
+                fontsize=14, fontweight='bold')
+
+
 def plot_graph_comparison(G_orig, G_anon, method_name, node_to_cluster=None):
-    """Crée une comparaison visuelle des graphes"""
+    """
+    Crée une comparaison visuelle des graphes.
+
+    Gère plusieurs types de graphes :
+    - Graphes classiques (Random Add/Del, Random Switch, k-anonymity)
+    - Graphes probabilistes (k,ε)-obfuscation avec arêtes pondérées
+    - Super-graphes (Généralisation avec clusters)
+    - Graphes différentiellement privés (EdgeFlip, Laplace)
+    """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
 
     # Position commune pour comparaison
@@ -951,33 +1089,50 @@ def plot_graph_comparison(G_orig, G_anon, method_name, node_to_cluster=None):
         else:
             pos_anon = pos
 
-            # Colorer les arêtes différemment
-            orig_edges = set(G_orig.edges())
+            # ═══════════════════════════════════════════════════════════════════
+            # DÉTECTION DE GRAPHE PROBABILISTE
+            # ═══════════════════════════════════════════════════════════════════
+            # Vérifier si le graphe a des arêtes avec des probabilités
+            has_probabilities = False
+            if G_anon.number_of_edges() > 0:
+                first_edge = list(G_anon.edges())[0]
+                has_probabilities = 'probability' in G_anon[first_edge[0]][first_edge[1]]
 
-            # Dessiner les nœuds
-            nx.draw_networkx_nodes(G_anon, pos_anon, ax=ax2, node_color='lightgreen',
-                                  node_size=500, alpha=0.9)
+            if has_probabilities:
+                # ═══════════════════════════════════════════════════════════════
+                # VISUALISATION PROBABILISTE AMÉLIORÉE
+                # ═══════════════════════════════════════════════════════════════
+                plot_probabilistic_graph(G_anon, G_orig, method_name, ax2)
+            else:
+                # ═══════════════════════════════════════════════════════════════
+                # VISUALISATION CLASSIQUE (graphes déterministes)
+                # ═══════════════════════════════════════════════════════════════
+                orig_edges = set(G_orig.edges())
 
-            # Dessiner les arêtes par type
-            preserved_edges = [(u,v) for u,v in G_anon.edges()
-                              if (u,v) in orig_edges or (v,u) in orig_edges]
-            added_edges = [(u,v) for u,v in G_anon.edges()
-                          if (u,v) not in orig_edges and (v,u) not in orig_edges]
+                # Dessiner les nœuds
+                nx.draw_networkx_nodes(G_anon, pos_anon, ax=ax2, node_color='lightgreen',
+                                      node_size=500, alpha=0.9)
 
-            if preserved_edges:
-                nx.draw_networkx_edges(G_anon, pos_anon, preserved_edges, ax=ax2,
-                                      edge_color='blue', width=1.5, alpha=0.6,
-                                      style='solid', label='Arêtes préservées')
-            if added_edges:
-                nx.draw_networkx_edges(G_anon, pos_anon, added_edges, ax=ax2,
-                                      edge_color='red', width=1.5, alpha=0.6,
-                                      style='dashed', label='Arêtes ajoutées')
+                # Dessiner les arêtes par type
+                preserved_edges = [(u,v) for u,v in G_anon.edges()
+                                  if (u,v) in orig_edges or (v,u) in orig_edges]
+                added_edges = [(u,v) for u,v in G_anon.edges()
+                              if (u,v) not in orig_edges and (v,u) not in orig_edges]
 
-            nx.draw_networkx_labels(G_anon, pos_anon, ax=ax2, font_size=8, font_weight='bold')
-            ax2.legend(loc='upper right')
+                if preserved_edges:
+                    nx.draw_networkx_edges(G_anon, pos_anon, preserved_edges, ax=ax2,
+                                          edge_color='blue', width=1.5, alpha=0.6,
+                                          style='solid', label='Arêtes préservées')
+                if added_edges:
+                    nx.draw_networkx_edges(G_anon, pos_anon, added_edges, ax=ax2,
+                                          edge_color='red', width=1.5, alpha=0.6,
+                                          style='dashed', label='Arêtes ajoutées')
 
-            ax2.set_title(f'Graphe Anonymisé - {method_name}\n{G_anon.number_of_nodes()} nœuds, {G_anon.number_of_edges()} arêtes',
-                         fontsize=14, fontweight='bold')
+                nx.draw_networkx_labels(G_anon, pos_anon, ax=ax2, font_size=8, font_weight='bold')
+                ax2.legend(loc='upper right')
+
+                ax2.set_title(f'Graphe Anonymisé - {method_name}\n{G_anon.number_of_nodes()} nœuds, {G_anon.number_of_edges()} arêtes',
+                             fontsize=14, fontweight='bold')
     else:
         ax2.text(0.5, 0.5, 'Graphe non visualisable\n(format incompatible)',
                 ha='center', va='center', fontsize=12)
@@ -1778,6 +1933,75 @@ def main():
                     total = G_anon.graph.get('intra_edges', 0) + G_anon.graph.get('inter_edges', 0)
                     ratio = G_anon.graph.get('intra_edges', 0) / total * 100 if total > 0 else 0
                     st.metric("Ratio Intra/Total", f"{ratio:.1f}%")
+
+            # ═══════════════════════════════════════════════════════════════════
+            # SECTION SPÉCIALE : TIRAGE D'ÉCHANTILLONS (Graphes Probabilistes)
+            # ═══════════════════════════════════════════════════════════════════
+            if st.session_state.method_key == "Probabilistic" and isinstance(G_anon, nx.Graph):
+                # Vérifier si c'est un graphe probabiliste
+                if G_anon.number_of_edges() > 0:
+                    first_edge = list(G_anon.edges())[0]
+                    if 'probability' in G_anon[first_edge[0]][first_edge[1]]:
+                        st.markdown("---")
+                        st.markdown("### 🎲 Tirage d'Échantillons depuis le Graphe Probabiliste")
+
+                        st.info("""
+                        **💡 Principe du Tirage (Sampling)** :
+
+                        Dans un graphe probabiliste (k,ε)-obfuscation, chaque arête a une **probabilité d'existence**.
+                        Au lieu de publier le graphe probabiliste directement, on peut publier des **graphes échantillons**
+                        tirés au sort selon ces probabilités.
+
+                        - **Arêtes à haute probabilité** (≈ 95%) : Apparaissent presque toujours
+                        - **Arêtes à faible probabilité** (≈ 10%) : Apparaissent rarement
+
+                        Cliquez sur le bouton ci-dessous pour générer 3 échantillons différents !
+                        """)
+
+                        # Bouton pour générer des échantillons
+                        if st.button("🎲 Générer 3 Échantillons Aléatoires", key="sample_btn"):
+                            st.markdown("#### Échantillons Générés :")
+
+                            cols = st.columns(3)
+                            for i, col in enumerate(cols):
+                                with col:
+                                    # Générer un échantillon
+                                    sampled_graph = sample_from_probabilistic_graph(G_anon)
+
+                                    # Créer une figure pour cet échantillon
+                                    fig_sample, ax_sample = plt.subplots(1, 1, figsize=(6, 6))
+
+                                    pos = nx.spring_layout(G_orig, seed=42, k=0.5, iterations=50)
+
+                                    # Dessiner les nœuds
+                                    nx.draw_networkx_nodes(sampled_graph, pos, ax=ax_sample,
+                                                          node_color='lightyellow',
+                                                          node_size=400, alpha=0.9,
+                                                          edgecolors='orange', linewidths=2)
+
+                                    # Dessiner les arêtes
+                                    nx.draw_networkx_edges(sampled_graph, pos, ax=ax_sample,
+                                                          edge_color='gray', width=1.5, alpha=0.6)
+
+                                    # Labels
+                                    nx.draw_networkx_labels(sampled_graph, pos, ax=ax_sample,
+                                                           font_size=7, font_weight='bold')
+
+                                    ax_sample.set_title(f'Échantillon #{i+1}\n{sampled_graph.number_of_edges()} arêtes',
+                                                       fontsize=12, fontweight='bold')
+                                    ax_sample.axis('off')
+
+                                    plt.tight_layout()
+                                    st.pyplot(fig_sample)
+                                    plt.close(fig_sample)
+
+                                    # Afficher les stats
+                                    st.caption(f"**{sampled_graph.number_of_nodes()}** nœuds | **{sampled_graph.number_of_edges()}** arêtes")
+
+                        st.markdown("""
+                        **🔍 Observation** : Chaque échantillon est différent ! C'est cette variabilité qui crée
+                        de l'incertitude pour l'attaquant. Il ne peut pas savoir quel échantillon correspond au graphe original.
+                        """)
 
             st.markdown("---")
             st.markdown("### Distribution des Degrés")
