@@ -143,15 +143,117 @@ class GraphAnonymizer:
         return G
 
     def generalization(self, k=4):
-        """Généralisation avec k=4 pour clusters moyens"""
+        """
+        Généralisation par clustering avec taille minimale k.
+
+        ═══════════════════════════════════════════════════════════════════════
+        PRINCIPE DE LA GÉNÉRALISATION (k-anonymity structurelle) :
+        ═══════════════════════════════════════════════════════════════════════
+        - Regrouper les nœuds en CLUSTERS (super-nœuds) de taille ≥ k
+        - Chaque cluster représente au moins k nœuds indistinguables
+        - Les arêtes deviennent des super-arêtes entre clusters
+
+        GARANTIE DE PRIVACY :
+        - Un attaquant ne peut identifier un nœud spécifique dans un cluster
+        - Probabilité de ré-identification ≤ 1/k pour chaque nœud
+
+        PARAMÈTRE k :
+        - Plus k est GRAND → Clusters plus gros → PLUS de privacy → MOINS d'utilité
+        - Plus k est PETIT → Clusters plus petits → MOINS de privacy → PLUS d'utilité
+        ═══════════════════════════════════════════════════════════════════════
+        """
         G = self.original_graph.copy()
+        n = G.number_of_nodes()
 
+        # Nombre de clusters basé sur k
+        # On veut environ n/k clusters de taille k
+        num_clusters = max(2, n // k)  # Au moins 2 clusters
+
+        # Utiliser un algorithme de clustering spectral pour créer num_clusters
         try:
-            communities = list(nx.community.greedy_modularity_communities(G))
-        except:
-            # Fallback simple
-            communities = [set(G.nodes())]
+            # Essayer d'abord avec la méthode des communautés
+            from networkx.algorithms import community
 
+            # Utiliser label propagation qui converge rapidement
+            communities_generator = community.label_propagation_communities(G)
+            communities = list(communities_generator)
+
+            # Si on a trop de clusters, fusionner les plus petits
+            while len(communities) > num_clusters:
+                # Trouver les 2 plus petits clusters
+                communities = sorted(communities, key=len)
+                smallest = communities[0]
+                second_smallest = communities[1]
+                # Fusionner
+                merged = smallest.union(second_smallest)
+                communities = [merged] + communities[2:]
+
+            # Si on a trop peu de clusters, diviser les plus gros
+            while len(communities) < num_clusters and any(len(c) >= 2*k for c in communities):
+                # Trouver le plus gros cluster
+                communities = sorted(communities, key=len, reverse=True)
+                largest = communities[0]
+                if len(largest) >= 2*k:
+                    # Diviser en deux
+                    largest_list = list(largest)
+                    mid = len(largest_list) // 2
+                    part1 = set(largest_list[:mid])
+                    part2 = set(largest_list[mid:])
+                    communities = [part1, part2] + communities[1:]
+                else:
+                    break
+
+        except Exception as e:
+            # Fallback : clustering simple par degré
+            # Regrouper les nœuds par degré similaire
+            nodes_by_degree = {}
+            for node in G.nodes():
+                degree = G.degree(node)
+                if degree not in nodes_by_degree:
+                    nodes_by_degree[degree] = []
+                nodes_by_degree[degree].append(node)
+
+            # Créer des clusters de taille k
+            communities = []
+            current_cluster = set()
+            for degree in sorted(nodes_by_degree.keys()):
+                for node in nodes_by_degree[degree]:
+                    current_cluster.add(node)
+                    if len(current_cluster) >= k:
+                        communities.append(current_cluster)
+                        current_cluster = set()
+
+            # Ajouter le dernier cluster s'il existe
+            if current_cluster:
+                if communities:
+                    # Fusionner avec le dernier cluster
+                    communities[-1] = communities[-1].union(current_cluster)
+                else:
+                    communities.append(current_cluster)
+
+        # Assurer que tous les clusters ont au moins k nœuds
+        final_communities = []
+        buffer = set()
+
+        for community in sorted(communities, key=len, reverse=True):
+            community = set(community).union(buffer)
+            buffer = set()
+
+            if len(community) >= k:
+                final_communities.append(community)
+            else:
+                # Trop petit, mettre en buffer pour fusionner avec le prochain
+                buffer = community
+
+        # Si reste un buffer, fusionner avec le dernier cluster
+        if buffer and final_communities:
+            final_communities[-1] = final_communities[-1].union(buffer)
+        elif buffer:
+            final_communities.append(buffer)
+
+        communities = final_communities
+
+        # Créer le super-graphe
         super_graph = nx.Graph()
         node_to_cluster = {}
         cluster_to_nodes = {}
@@ -1081,32 +1183,94 @@ def plot_graph_comparison(G_orig, G_anon, method_name, node_to_cluster=None):
 
             # Si c'est un super-graphe, ajuster la visualisation
             if node_to_cluster is not None and hasattr(G_anon, 'graph'):
-                # Dessiner le super-graphe
+                # ═══════════════════════════════════════════════════════════════
+                # VISUALISATION AMÉLIORÉE DU SUPER-GRAPHE
+                # ═══════════════════════════════════════════════════════════════
+
+                # Tailles proportionnelles au nombre de nœuds dans chaque cluster
                 node_sizes = [G_anon.nodes[n].get('size', 1) * 300 for n in G_anon.nodes()]
-                nx.draw_networkx_nodes(G_anon, pos_anon, ax=ax2, node_color='orange',
-                                      node_size=node_sizes, alpha=0.8)
 
-                # Dessiner les arêtes avec poids
-                edges = G_anon.edges()
-                weights = [G_anon[u][v].get('weight', 1) for u, v in edges]
-                max_weight = max(weights) if weights else 1
+                # Couleurs variées pour distinguer les clusters
+                import matplotlib.cm as cm
+                num_clusters = G_anon.number_of_nodes()
+                colors_palette = cm.Set3(np.linspace(0, 1, num_clusters))
 
-                for (u, v), weight in zip(edges, weights):
+                # Dessiner les super-nœuds
+                for idx, node in enumerate(G_anon.nodes()):
+                    nx.draw_networkx_nodes(G_anon, pos_anon, nodelist=[node], ax=ax2,
+                                          node_color=[colors_palette[idx]],
+                                          node_size=node_sizes[idx],
+                                          alpha=0.85, edgecolors='darkblue',
+                                          linewidths=2.5)
+
+                # Séparer les arêtes intra-cluster (self-loops) et inter-cluster
+                intra_edges = []
+                inter_edges = []
+                intra_weights = []
+                inter_weights = []
+
+                for u, v in G_anon.edges():
+                    weight = G_anon[u][v].get('weight', 1)
                     if u == v:  # Self-loop (arêtes intra-cluster)
-                        # Dessiner une boucle
-                        continue
-                    else:
-                        width = 1 + 4 * (weight / max_weight)
+                        intra_edges.append((u, v))
+                        intra_weights.append(weight)
+                    else:  # Arêtes inter-cluster
+                        inter_edges.append((u, v))
+                        inter_weights.append(weight)
+
+                # Calculer les poids max pour normalisation
+                max_intra_weight = max(intra_weights) if intra_weights else 1
+                max_inter_weight = max(inter_weights) if inter_weights else 1
+
+                # Dessiner les arêtes INTRA-cluster (self-loops)
+                if intra_edges:
+                    for (u, v), weight in zip(intra_edges, intra_weights):
+                        # Dessiner un cercle autour du nœud pour représenter les arêtes internes
+                        node_pos = pos_anon[u]
+                        radius = 0.08 + 0.12 * (weight / max_intra_weight)
+                        circle = plt.Circle(node_pos, radius, color='green',
+                                          fill=False, linewidth=2 + 3*(weight/max_intra_weight),
+                                          linestyle='solid', alpha=0.6)
+                        ax2.add_patch(circle)
+
+                # Dessiner les arêtes INTER-cluster
+                if inter_edges:
+                    for (u, v), weight in zip(inter_edges, inter_weights):
+                        width = 1.5 + 4.5 * (weight / max_inter_weight)
                         nx.draw_networkx_edges(G_anon, pos_anon, [(u, v)], ax=ax2,
-                                              width=width, alpha=0.6, edge_color='purple')
+                                              width=width, alpha=0.7, edge_color='purple',
+                                              style='solid')
 
-                # Labels avec taille de cluster
-                labels = {n: f"C{n}\n({G_anon.nodes[n].get('size', '?')})" for n in G_anon.nodes()}
+                # Labels avec détails : ID + taille + poids intra
+                labels = {}
+                for n in G_anon.nodes():
+                    size = G_anon.nodes[n].get('size', '?')
+                    intra_weight = 0
+                    if G_anon.has_edge(n, n):
+                        intra_weight = G_anon[n][n].get('weight', 0)
+                    labels[n] = f"C{n}\n[{size}n]\n{intra_weight}i"
+
                 nx.draw_networkx_labels(G_anon, pos_anon, labels, ax=ax2,
-                                       font_size=10, font_weight='bold')
+                                       font_size=9, font_weight='bold',
+                                       bbox=dict(boxstyle='round,pad=0.3',
+                                                facecolor='white', alpha=0.8,
+                                                edgecolor='black'))
 
-                ax2.set_title(f'Super-Graphe - {method_name}\n{G_anon.number_of_nodes()} super-nœuds',
-                             fontsize=14, fontweight='bold')
+                # Légende explicative
+                from matplotlib.lines import Line2D
+                legend_elements = [
+                    Line2D([0], [0], color='green', linewidth=3, linestyle='solid',
+                          label='Arêtes intra-cluster (vert)'),
+                    Line2D([0], [0], color='purple', linewidth=3, linestyle='solid',
+                          label='Arêtes inter-cluster (violet)'),
+                ]
+                ax2.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.9)
+
+                # Titre avec statistiques complètes
+                total_intra = sum(intra_weights)
+                total_inter = sum(inter_weights)
+                ax2.set_title(f'Super-Graphe - {method_name}\n{G_anon.number_of_nodes()} clusters | {int(total_intra)} arêtes intra | {int(total_inter)} arêtes inter',
+                             fontsize=13, fontweight='bold')
             else:
                 # Graphe normal avec nœuds différents
                 nx.draw_networkx_nodes(G_anon, pos_anon, ax=ax2, node_color='lightgreen',
