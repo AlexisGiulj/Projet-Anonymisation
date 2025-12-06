@@ -265,7 +265,8 @@ class GraphAnonymizer:
             for node in community:
                 node_to_cluster[node] = cluster_id
 
-            super_graph.add_node(cluster_id, size=len(community), nodes=list(community))
+            super_graph.add_node(cluster_id, cluster_size=len(community), size=len(community),
+                               nodes=list(community), internal_edges=0)
             cluster_to_nodes[cluster_id] = list(community)
             cluster_id += 1
 
@@ -288,6 +289,8 @@ class GraphAnonymizer:
                 else:
                     # Self-loops pour les arêtes internes
                     intra_edges += 1
+                    # Incrémenter le compteur d'arêtes internes du nœud
+                    super_graph.nodes[cluster_u]['internal_edges'] += 1
                     if super_graph.has_edge(cluster_u, cluster_u):
                         super_graph[cluster_u][cluster_u]['weight'] += 1
                     else:
@@ -1806,6 +1809,121 @@ def simulate_subgraph_attack(G_orig, G_anon, target_node=0):
     return results
 
 
+def calculate_supergraph_metrics(G_orig, G_super):
+    """
+    Calcule les métriques d'utilité pour un SUPER-GRAPHE (Généralisation).
+
+    Le super-graphe a une structure différente :
+    - Chaque NŒUD = un CLUSTER (super-nœud)
+    - Attributs des nœuds : 'cluster_size', 'internal_edges'
+    - Arêtes INTRA-cluster : self-loops avec poids = nb d'arêtes internes
+    - Arêtes INTER-cluster : arêtes normales avec poids = nb d'arêtes entre clusters
+
+    On calcule les métriques directement à partir de ces informations.
+    """
+    metrics = {
+        'type': 'super-graph',
+        'comparable': True,
+        'is_super_graph': True
+    }
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # MÉTRIQUES DE BASE (Structure du Super-Graphe)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    num_clusters = G_super.number_of_nodes()
+    metrics['num_clusters'] = num_clusters
+
+    # Extraire les tailles de clusters
+    cluster_sizes = []
+    total_internal_edges = 0
+
+    for node in G_super.nodes():
+        node_data = G_super.nodes[node]
+        size = node_data.get('cluster_size', 0)
+        internal = node_data.get('internal_edges', 0)
+
+        cluster_sizes.append(size)
+        total_internal_edges += internal
+
+    metrics['num_nodes'] = sum(cluster_sizes)  # Total de nœuds originaux
+    metrics['min_cluster_size'] = min(cluster_sizes) if cluster_sizes else 0
+    metrics['max_cluster_size'] = max(cluster_sizes) if cluster_sizes else 0
+    metrics['avg_cluster_size'] = np.mean(cluster_sizes) if cluster_sizes else 0
+    metrics['cluster_size_variance'] = np.var(cluster_sizes) if cluster_sizes else 0
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # MÉTRIQUES D'ARÊTES (Intra vs Inter)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # Arêtes intra-cluster (depuis les self-loops ou attributs de nœuds)
+    metrics['intra_cluster_edges'] = total_internal_edges
+
+    # Arêtes inter-cluster (depuis les arêtes entre clusters)
+    inter_cluster_edges = 0
+    for u, v in G_super.edges():
+        if u != v:  # Exclure les self-loops
+            weight = G_super[u][v].get('weight', 1)
+            inter_cluster_edges += weight
+
+    metrics['inter_cluster_edges'] = inter_cluster_edges
+    metrics['num_edges'] = total_internal_edges + inter_cluster_edges
+
+    # Ratio intra/total
+    total_edges = metrics['num_edges']
+    if total_edges > 0:
+        metrics['intra_ratio'] = total_internal_edges / total_edges
+        metrics['inter_ratio'] = inter_cluster_edges / total_edges
+    else:
+        metrics['intra_ratio'] = 0
+        metrics['inter_ratio'] = 0
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # PERTE D'INFORMATION (Information Loss)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # Comparer avec le graphe original
+    orig_edges = G_orig.number_of_edges()
+    orig_nodes = G_orig.number_of_nodes()
+
+    # Perte de granularité : passage de n nœuds à k clusters
+    metrics['node_compression_ratio'] = num_clusters / orig_nodes if orig_nodes > 0 else 0
+    metrics['information_loss'] = 1 - metrics['node_compression_ratio']
+
+    # Conservation des arêtes
+    if orig_edges > 0:
+        metrics['edge_preservation_ratio'] = total_edges / orig_edges
+    else:
+        metrics['edge_preservation_ratio'] = 0
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # MÉTRIQUES STRUCTURELLES (sur le super-graphe lui-même)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # Densité du super-graphe (sans compter les self-loops)
+    super_graph_no_loops = G_super.copy()
+    super_graph_no_loops.remove_edges_from(nx.selfloop_edges(super_graph_no_loops))
+    metrics['super_graph_density'] = nx.density(super_graph_no_loops)
+
+    # Degré moyen des clusters (nb de clusters voisins)
+    super_degrees = [d for n, d in super_graph_no_loops.degree()]
+    metrics['avg_cluster_degree'] = np.mean(super_degrees) if super_degrees else 0
+    metrics['max_cluster_degree'] = max(super_degrees) if super_degrees else 0
+
+    # Connectivité du super-graphe
+    metrics['super_graph_connected'] = nx.is_connected(super_graph_no_loops)
+
+    if metrics['super_graph_connected']:
+        try:
+            metrics['super_graph_diameter'] = nx.diameter(super_graph_no_loops)
+        except:
+            metrics['super_graph_diameter'] = None
+    else:
+        metrics['super_graph_diameter'] = None
+
+    return metrics
+
+
 def calculate_utility_metrics(G_orig, G_anon):
     """
     Calcule les métriques d'utilité selon la thèse (Section 3.5.2).
@@ -1834,7 +1952,7 @@ def calculate_utility_metrics(G_orig, G_anon):
 
     CAS SPÉCIAUX :
     - Graphes PROBABILISTES : Calculer sur ÉCHANTILLONS (sample graphs)
-    - GÉNÉRALISATION (super-graphe) : Calculer sur le SUPER-GRAPHE directement
+    - GÉNÉRALISATION (super-graphe) : Métriques adaptées au format cluster
     ═══════════════════════════════════════════════════════════════════════════
     """
     metrics = {}
@@ -1843,9 +1961,19 @@ def calculate_utility_metrics(G_orig, G_anon):
     # CAS 1 : SUPER-GRAPHE (Généralisation)
     # ═══════════════════════════════════════════════════════════════════════
     if not isinstance(G_anon, nx.Graph):
-        # Pour la généralisation, retourner qu'on ne peut pas comparer
-        # (structure complètement différente)
+        # Pour la généralisation, on ne peut pas comparer
         return {'type': 'super-graph', 'comparable': False}
+
+    # Vérifier si c'est un super-graphe (a des attributs cluster)
+    is_super_graph = False
+    if G_anon.number_of_nodes() > 0:
+        first_node = list(G_anon.nodes())[0]
+        node_data = G_anon.nodes[first_node]
+        is_super_graph = 'cluster_size' in node_data
+
+    if is_super_graph:
+        # MÉTRIQUES SPÉCIFIQUES POUR LE SUPER-GRAPHE
+        return calculate_supergraph_metrics(G_orig, G_anon)
 
     # ═══════════════════════════════════════════════════════════════════════
     # CAS 2 : GRAPHE PROBABILISTE → Échantillonner d'abord
@@ -2066,6 +2194,187 @@ def calculate_privacy_metrics_separated(G_orig, G_anon, method_key, method_param
             metrics['max_privacy'] = 1/min(cluster_sizes) if cluster_sizes else 1.0
 
     return metrics
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DICTIONNAIRE DES DÉFINITIONS ET MÉTHODES DE CALCUL (pour tooltips)
+# ═══════════════════════════════════════════════════════════════════════════
+
+METRIC_DEFINITIONS = {
+    # Métriques de base
+    'num_nodes': {
+        'name': 'Nombre de Nœuds',
+        'definition': "Nombre total de nœuds dans le graphe",
+        'formula': "n = |V|",
+        'interpretation': "Plus élevé = graphe plus grand"
+    },
+    'num_edges': {
+        'name': 'Nombre d\'Arêtes',
+        'definition': "Nombre total d'arêtes dans le graphe",
+        'formula': "m = |E|",
+        'interpretation': "Plus élevé = graphe plus connecté"
+    },
+    'density': {
+        'name': 'Densité',
+        'definition': "Proportion d'arêtes existantes par rapport au maximum possible",
+        'formula': "D = 2m / (n(n-1))",
+        'interpretation': "0 = vide, 1 = complet, ~0.1 = épars, ~0.5 = dense"
+    },
+
+    # Groupe 1: Degree-based
+    'avg_degree': {
+        'name': 'Degré Moyen (S_AD)',
+        'definition': "Nombre moyen de voisins par nœud",
+        'formula': "d_avg = (1/n) × Σ deg(v)",
+        'interpretation': "Mesure la connectivité moyenne du graphe"
+    },
+    'max_degree': {
+        'name': 'Degré Maximal (S_MD)',
+        'definition': "Plus grand nombre de voisins d'un nœud",
+        'formula': "d_max = max{deg(v)}",
+        'interpretation': "Identifie les hubs (nœuds très connectés)"
+    },
+    'degree_variance': {
+        'name': 'Variance des Degrés (S_DV)',
+        'definition': "Dispersion des degrés autour de la moyenne",
+        'formula': "σ² = (1/n) × Σ (deg(v) - d_avg)²",
+        'interpretation': "Élevée = hétérogénéité (hubs + nœuds peu connectés)"
+    },
+    'power_law_exponent': {
+        'name': 'Exposant Power-Law (S_PL)',
+        'definition': "Caractérise la distribution des degrés pour les réseaux scale-free",
+        'formula': "P(k) ∝ k^(-γ) où γ est estimé par régression log-log",
+        'interpretation': "γ ∈ [2,3] typique pour réseaux sociaux (loi de puissance)"
+    },
+
+    # Groupe 2: Shortest path-based
+    'diameter': {
+        'name': 'Diamètre (S_Diam)',
+        'definition': "Plus grande distance entre deux nœuds connectés",
+        'formula': "D = max{d(u,v)} pour tous les couples",
+        'interpretation': "Borne supérieure sur toutes les distances"
+    },
+    'avg_shortest_path': {
+        'name': 'Distance Moyenne (S_APD)',
+        'definition': "Longueur moyenne des plus courts chemins entre tous les couples",
+        'formula': "L = (2/(n(n-1))) × Σ d(u,v)",
+        'interpretation': "Mesure la compacité du réseau (propriété small-world)"
+    },
+    'effective_diameter': {
+        'name': 'Diamètre Effectif (S_EDiam)',
+        'definition': "90e percentile des distances (plus robuste que le diamètre)",
+        'formula': "D_eff = Percentile_90{d(u,v)}",
+        'interpretation': "90% des nœuds sont à distance ≤ D_eff"
+    },
+    'connectivity_length': {
+        'name': 'Longueur de Connectivité (S_CL)',
+        'definition': "Moyenne harmonique des distances (privilégie les courtes distances)",
+        'formula': "CL = n(n-1) / Σ(1/d(u,v))",
+        'interpretation': "Plus faible = meilleure connectivité locale"
+    },
+
+    # Groupe 3: Clustering
+    'clustering_coefficient': {
+        'name': 'Coefficient de Clustering (S_CC)',
+        'definition': "Mesure la tendance à former des triangles (cliques locales)",
+        'formula': "CC = (3 × nb_triangles) / nb_triples_connectés",
+        'interpretation': "Élevé = forte transitivité (ami de mes amis = mon ami)"
+    },
+    'avg_clustering': {
+        'name': 'Clustering Moyen',
+        'definition': "Moyenne des coefficients de clustering locaux",
+        'formula': "C_avg = (1/n) × Σ C(v) où C(v) = triangles(v) / triples(v)",
+        'interpretation': "Mesure alternative du clustering (locale → globale)"
+    },
+
+    # Métriques de préservation
+    'degree_correlation': {
+        'name': 'Corrélation des Degrés',
+        'definition': "Corrélation de Spearman entre séquences de degrés (original vs anonymisé)",
+        'formula': "ρ = Spearman(deg_orig, deg_anon)",
+        'interpretation': ">0.9 = excellente préservation, >0.7 = bonne, <0.7 = faible"
+    },
+
+    # Métriques pour super-graphe (généralisation)
+    'num_clusters': {
+        'name': 'Nombre de Clusters',
+        'definition': "Nombre de super-nœuds dans le graphe de généralisation",
+        'formula': "k = nombre de clusters",
+        'interpretation': "Plus faible = plus de privacy, moins d'utilité"
+    },
+    'min_cluster_size': {
+        'name': 'Taille Min. Cluster',
+        'definition': "Plus petit nombre de nœuds dans un cluster",
+        'formula': "min{|C_i|}",
+        'interpretation': "Doit être ≥ k pour garantir k-anonymity"
+    },
+    'avg_cluster_size': {
+        'name': 'Taille Moy. Cluster',
+        'definition': "Nombre moyen de nœuds par cluster",
+        'formula': "avg{|C_i|} = n / k",
+        'interpretation': "Plus élevé = clusters plus gros = plus de privacy"
+    },
+    'intra_cluster_edges': {
+        'name': 'Arêtes Intra-Cluster',
+        'definition': "Nombre d'arêtes à l'intérieur des clusters",
+        'formula': "Somme des arêtes internes de chaque cluster",
+        'interpretation': "Représentent la structure locale préservée"
+    },
+    'inter_cluster_edges': {
+        'name': 'Arêtes Inter-Cluster',
+        'definition': "Nombre d'arêtes entre différents clusters",
+        'formula': "Arêtes reliant des nœuds de clusters différents",
+        'interpretation': "Représentent les connexions globales"
+    },
+    'intra_ratio': {
+        'name': 'Ratio Intra/Total',
+        'definition': "Proportion d'arêtes intra-cluster par rapport au total",
+        'formula': "ratio = intra_edges / (intra_edges + inter_edges)",
+        'interpretation': "Élevé = structure locale bien préservée"
+    },
+    'information_loss': {
+        'name': 'Perte d\'Information',
+        'definition': "Proportion de granularité perdue lors du clustering",
+        'formula': "loss = 1 - (k_clusters / n_nodes)",
+        'interpretation': "0 = aucune perte, 1 = perte totale (1 seul cluster)"
+    },
+    'edge_preservation_ratio': {
+        'name': 'Taux de Préservation des Arêtes',
+        'definition': "Proportion d'arêtes préservées après anonymisation",
+        'formula': "ratio = edges_anon / edges_orig",
+        'interpretation': "1 = toutes préservées, <1 = pertes, >1 = arêtes ajoutées"
+    },
+    'super_graph_density': {
+        'name': 'Densité du Super-Graphe',
+        'definition': "Densité du graphe des clusters (sans self-loops)",
+        'formula': "D_super = 2m_inter / (k(k-1))",
+        'interpretation': "Mesure la connectivité entre clusters"
+    },
+}
+
+
+def get_metric_tooltip(metric_key):
+    """
+    Génère un tooltip formaté pour une métrique donnée.
+
+    Args:
+        metric_key: Clé de la métrique dans METRIC_DEFINITIONS
+
+    Returns:
+        String formaté pour le paramètre 'help' de st.metric()
+    """
+    if metric_key not in METRIC_DEFINITIONS:
+        return None
+
+    info = METRIC_DEFINITIONS[metric_key]
+
+    tooltip = (
+        f"📖 **Définition**: {info['definition']}\n\n"
+        f"📐 **Formule**: {info['formula']}\n\n"
+        f"💡 **Interprétation**: {info['interpretation']}"
+    )
+
+    return tooltip
 
 
 def main():
@@ -2426,30 +2735,130 @@ def main():
             st.markdown("""
             Ces métriques mesurent la **préservation de l'utilité** du graphe après anonymisation.
             Plus ces métriques sont proches du graphe original, mieux l'utilité est préservée.
+
+            💡 **Astuce** : Passez votre souris sur le ℹ️ à côté de chaque métrique pour voir sa définition et méthode de calcul.
             """)
 
             utility_metrics = calculate_utility_metrics(G_orig, G_anon)
 
-            if utility_metrics.get('comparable', True):
+            # ═══════════════════════════════════════════════════════════════════════
+            # CAS 1 : SUPER-GRAPHE (Généralisation)
+            # ═══════════════════════════════════════════════════════════════════════
+            if utility_metrics.get('is_super_graph', False):
+                st.info("🔍 **Type de graphe** : Super-Graphe (Généralisation) - Métriques adaptées au format cluster")
+
+                st.markdown("### 🏘️ Métriques de Clustering")
+
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("Nombre de Clusters",
+                             utility_metrics.get('num_clusters', 'N/A'),
+                             help=get_metric_tooltip('num_clusters'))
+                with col2:
+                    st.metric("Taille Min. Cluster",
+                             utility_metrics.get('min_cluster_size', 'N/A'),
+                             help=get_metric_tooltip('min_cluster_size'))
+                with col3:
+                    st.metric("Taille Moy. Cluster",
+                             f"{utility_metrics.get('avg_cluster_size', 0):.1f}",
+                             help=get_metric_tooltip('avg_cluster_size'))
+                with col4:
+                    st.metric("Taille Max. Cluster",
+                             utility_metrics.get('max_cluster_size', 'N/A'))
+
+                st.markdown("---")
+                st.markdown("### 🔗 Métriques d'Arêtes")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric("Arêtes Intra-Cluster",
+                             utility_metrics.get('intra_cluster_edges', 'N/A'),
+                             help=get_metric_tooltip('intra_cluster_edges'))
+                with col2:
+                    st.metric("Arêtes Inter-Cluster",
+                             utility_metrics.get('inter_cluster_edges', 'N/A'),
+                             help=get_metric_tooltip('inter_cluster_edges'))
+                with col3:
+                    intra_ratio = utility_metrics.get('intra_ratio', 0)
+                    st.metric("Ratio Intra/Total",
+                             f"{intra_ratio*100:.1f}%",
+                             help=get_metric_tooltip('intra_ratio'))
+
+                st.markdown("---")
+                st.markdown("### 📊 Perte d'Information")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    info_loss = utility_metrics.get('information_loss', 0)
+                    st.metric("Perte d'Information",
+                             f"{info_loss*100:.1f}%",
+                             help=get_metric_tooltip('information_loss'))
+                with col2:
+                    edge_pres = utility_metrics.get('edge_preservation_ratio', 0)
+                    st.metric("Préservation des Arêtes",
+                             f"{edge_pres*100:.1f}%",
+                             help=get_metric_tooltip('edge_preservation_ratio'))
+                with col3:
+                    super_density = utility_metrics.get('super_graph_density', 0)
+                    st.metric("Densité Super-Graphe",
+                             f"{super_density:.3f}",
+                             help=get_metric_tooltip('super_graph_density'))
+
+                # Afficher un résumé comparatif
+                st.markdown("---")
+                st.markdown("### 📉 Comparaison Original ↔ Anonymisé")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**Graphe Original**")
+                    st.metric("Nœuds", G_orig.number_of_nodes())
+                    st.metric("Arêtes", G_orig.number_of_edges())
+
+                with col2:
+                    st.markdown("**Super-Graphe**")
+                    st.metric("Clusters (super-nœuds)", utility_metrics.get('num_clusters', 'N/A'))
+                    st.metric("Arêtes Totales", utility_metrics.get('num_edges', 'N/A'))
+
+            # ═══════════════════════════════════════════════════════════════════════
+            # CAS 2 : GRAPHE CLASSIQUE ou PROBABILISTE
+            # ═══════════════════════════════════════════════════════════════════════
+            elif utility_metrics.get('comparable', True):
+                if utility_metrics.get('is_sample', False):
+                    st.info("🎲 **Type de graphe** : Échantillon tiré depuis un graphe probabiliste")
+
                 st.markdown("### 📊 Métriques de Base")
 
                 col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
-                    st.metric("Nœuds", utility_metrics.get('num_nodes', 'N/A'))
+                    st.metric("Nœuds",
+                             utility_metrics.get('num_nodes', 'N/A'),
+                             help=get_metric_tooltip('num_nodes'))
                 with col2:
-                    st.metric("Arêtes", utility_metrics.get('num_edges', 'N/A'))
+                    st.metric("Arêtes",
+                             utility_metrics.get('num_edges', 'N/A'),
+                             help=get_metric_tooltip('num_edges'))
                 with col3:
                     orig_density = nx.density(G_orig)
                     anon_density = utility_metrics.get('density', 0)
                     delta_density = anon_density - orig_density
-                    st.metric("Densité", f"{anon_density:.3f}", delta=f"{delta_density:+.3f}")
+                    st.metric("Densité",
+                             f"{anon_density:.3f}",
+                             delta=f"{delta_density:+.3f}",
+                             help=get_metric_tooltip('density'))
                 with col4:
                     if utility_metrics.get('avg_clustering') is not None:
                         orig_clust = nx.average_clustering(G_orig)
                         anon_clust = utility_metrics['avg_clustering']
                         delta_clust = anon_clust - orig_clust
-                        st.metric("Clustering Moyen", f"{anon_clust:.3f}", delta=f"{delta_clust:+.3f}")
+                        st.metric("Clustering Moyen",
+                                 f"{anon_clust:.3f}",
+                                 delta=f"{delta_clust:+.3f}",
+                                 help=get_metric_tooltip('avg_clustering'))
 
                 st.markdown("---")
                 st.markdown("### 🌐 Métriques Globales")
@@ -2465,9 +2874,14 @@ def main():
                                 largest_cc = max(nx.connected_components(G_orig), key=len)
                                 orig_diam = nx.diameter(G_orig.subgraph(largest_cc))
                             delta_diam = utility_metrics['diameter'] - orig_diam
-                            st.metric("Diamètre", utility_metrics['diameter'], delta=f"{delta_diam:+d}")
+                            st.metric("Diamètre",
+                                     utility_metrics['diameter'],
+                                     delta=f"{delta_diam:+d}",
+                                     help=get_metric_tooltip('diameter'))
                         except:
-                            st.metric("Diamètre", utility_metrics['diameter'])
+                            st.metric("Diamètre",
+                                     utility_metrics['diameter'],
+                                     help=get_metric_tooltip('diameter'))
 
                 with col2:
                     if utility_metrics.get('avg_shortest_path') is not None:
@@ -2478,14 +2892,20 @@ def main():
                                 largest_cc = max(nx.connected_components(G_orig), key=len)
                                 orig_asp = nx.average_shortest_path_length(G_orig.subgraph(largest_cc))
                             delta_asp = utility_metrics['avg_shortest_path'] - orig_asp
-                            st.metric("Chemin Moyen", f"{utility_metrics['avg_shortest_path']:.2f}", delta=f"{delta_asp:+.2f}")
+                            st.metric("Chemin Moyen",
+                                     f"{utility_metrics['avg_shortest_path']:.2f}",
+                                     delta=f"{delta_asp:+.2f}",
+                                     help=get_metric_tooltip('avg_shortest_path'))
                         except:
-                            st.metric("Chemin Moyen", f"{utility_metrics['avg_shortest_path']:.2f}")
+                            st.metric("Chemin Moyen",
+                                     f"{utility_metrics['avg_shortest_path']:.2f}",
+                                     help=get_metric_tooltip('avg_shortest_path'))
 
                 with col3:
                     if utility_metrics.get('degree_correlation') is not None:
-                        st.metric("Corrélation des Degrés", f"{utility_metrics['degree_correlation']:.3f}",
-                                 help="Coefficient de Spearman : 1 = parfait, 0 = aucune corrélation")
+                        st.metric("Corrélation des Degrés",
+                                 f"{utility_metrics['degree_correlation']:.3f}",
+                                 help=get_metric_tooltip('degree_correlation'))
 
                 st.markdown("---")
                 st.markdown("### 📉 Trade-off Utilité vs Modifications")
@@ -2521,7 +2941,7 @@ def main():
                             st.warning("⚠️ Modifications importantes")
 
             else:
-                st.info("Graphe de type super-nodes : métriques d'utilité non directement comparables")
+                st.warning("⚠️ Type de graphe non reconnu - impossible de calculer les métriques")
 
         with tab4:
             st.markdown("## 🔒 Métriques de Privacy")
