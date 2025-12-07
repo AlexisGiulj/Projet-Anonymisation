@@ -359,11 +359,20 @@ class GraphAnonymizer:
         return prob_graph
 
     def differential_privacy_edgeflip(self, epsilon=0.8):
-        """EdgeFlip avec epsilon=0.8 pour effet visible"""
+        """
+        EdgeFlip avec epsilon-differential privacy.
+
+        FORMULE CORRECTE : s = 2 / (e^epsilon + 1)
+
+        Trade-off :
+        - epsilon PETIT => s GRAND => beaucoup de flips => FORTE privacy
+        - epsilon GRAND => s PETIT => peu de flips => FAIBLE privacy
+        """
         G = nx.Graph()
         G.add_nodes_from(self.original_graph.nodes())
 
-        s = 1 - np.exp(-epsilon)
+        # FORMULE CORRECTE (dérivée du ratio de DP)
+        s = 2 / (np.exp(epsilon) + 1)
 
         for u in self.original_graph.nodes():
             for v in self.original_graph.nodes():
@@ -708,11 +717,28 @@ P[A(G) = O] ≤ e^ε · P[A(G') = O]
 
 Plus ε est petit, plus forte est la garantie de privacy.
 
-**Algorithme EdgeFlip** :
+**Algorithme EdgeFlip (en langage naturel)** :
+
+Pour chaque paire de nœuds possible (u, v) dans le graphe :
+1. **Lancer une pièce biaisée** avec probabilité s/2
+2. **Si pile** (probabilité s/2) : INVERSER l'état de l'arête
+   - Si l'arête existe → la supprimer
+   - Si l'arête n'existe pas → l'ajouter
+3. **Si face** (probabilité 1-s/2) : GARDER l'état de l'arête
+   - Si l'arête existe → la garder
+   - Si l'arête n'existe pas → ne rien faire
+
+Le paramètre s dépend du budget privacy ε selon : **s = 2/(e^ε + 1)**
+
+**Trade-off** :
+- ε petit (0.1) → s = 0.95 → flip 47.5% des arêtes → **forte privacy**
+- ε grand (3.0) → s = 0.09 → flip 4.7% des arêtes → **faible privacy**
+
+**Algorithme EdgeFlip (pseudo-code formel)** :
 
 ```
 Entrée : G = (V, E), ε
-Paramètre : s = 1 - e^(-ε)
+Paramètre : s = 2 / (e^ε + 1)    ← FORMULE CORRECTE
 
 Pour chaque paire (u, v) avec u < v :
   exists = (u,v) ∈ E
@@ -735,7 +761,7 @@ Pour une arête (u,v) :
 P[output=1 | exists=1] = 1 - s/2
 P[output=1 | exists=0] = s/2
 
-Ratio : (1 - s/2) / (s/2) = e^ε
+Ratio : (1 - s/2) / (s/2) = (e^ε + 1 - 1) / 1 = e^ε ✓
 
 Donc EdgeFlip satisfait ε-edge-DP.
 
@@ -2570,35 +2596,37 @@ def main():
             max_value=3.0,
             value=method['params']['epsilon'],
             step=0.1,
-            help="""⚠️ ATTENTION - Paradoxe de la Privacy Différentielle:
+            help="""📖 Budget de Privacy Différentielle (ε-DP)
 
-ε PETIT = FORTE privacy (mais graphe PROCHE de l'original!)
-ε GRAND = FAIBLE privacy (graphe TRES DIFFERENT de l'original)
+FORMULE CORRECTE : s = 2/(e^ε + 1), flip_probability = s/2
 
-En DP, la privacy vient de l'indistinguishability, pas du bruit!
+Trade-off Privacy-Utilité :
+• ε PETIT = FORTE privacy (beaucoup de modifications)
+• ε GRAND = FAIBLE privacy (peu de modifications)
 
-• ε = 0.1 (petit): flip_prob = 4.8% → peu de changements → FORTE privacy
-• ε = 1.0 (moyen): flip_prob = 31.6% → changements modérés → privacy moyenne
-• ε = 3.0 (grand): flip_prob = 47.5% → beaucoup de changements → FAIBLE privacy
+Exemples concrets :
+• ε = 0.1 (petit): flip_prob = 47.5% → graphe très différent → FORTE privacy ✓
+• ε = 1.0 (moyen): flip_prob = 26.9% → changements modérés → privacy moyenne
+• ε = 3.0 (grand): flip_prob = 4.7% → graphe proche → FAIBLE privacy
 
-Formule: s = 1 - e^(-ε), flip_probability = s/2"""
+En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
         )
         dynamic_params['epsilon'] = epsilon_value
 
-        # Afficher l'impact du budget avec explication du paradoxe
+        # Afficher l'impact du budget AVEC LA FORMULE CORRECTE
         privacy_loss = np.exp(epsilon_value)
-        s = 1 - np.exp(-epsilon_value)
+        s = 2 / (np.exp(epsilon_value) + 1)  # FORMULE CORRECTE
         flip_prob = s / 2
 
         if epsilon_value < 1.0:
             st.sidebar.success(f"✅ Privacy Forte (ε={epsilon_value:.1f})")
-            st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Graphe proche de l'original")
+            st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Graphe très modifié")
         elif epsilon_value < 2.0:
             st.sidebar.warning(f"⚠️ Privacy Moyenne (ε={epsilon_value:.1f})")
             st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Modifications modérées")
         else:
             st.sidebar.error(f"❌ Privacy Faible (ε={epsilon_value:.1f})")
-            st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Graphe très différent")
+            st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Graphe proche de l'original")
 
     # Bouton pour anonymiser
     st.sidebar.markdown("---")
