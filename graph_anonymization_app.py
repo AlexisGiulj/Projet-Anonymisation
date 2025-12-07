@@ -2695,11 +2695,50 @@ def calculate_privacy_metrics_separated(G_orig, G_anon, method_key, method_param
 
         # Analyser les probabilités pour vérifier la dispersion
         if G_anon.number_of_edges() > 0:
-            probs = [G_anon[u][v].get('probability', 1.0) for u, v in G_anon.edges()]
-            metrics['avg_probability'] = np.mean(probs)
-            metrics['std_probability'] = np.std(probs)
-            metrics['min_probability'] = np.min(probs)
-            metrics['max_probability'] = np.max(probs)
+            # Séparer arêtes existantes vs potentielles
+            existing_probs = []
+            potential_probs = []
+            all_probs = []
+
+            for u, v in G_anon.edges():
+                prob = G_anon[u][v].get('probability', 1.0)
+                is_original = G_anon[u][v].get('is_original', False)
+                all_probs.append(prob)
+
+                if is_original:
+                    existing_probs.append(prob)
+                else:
+                    potential_probs.append(prob)
+
+            # Métriques globales
+            metrics['avg_probability'] = np.mean(all_probs)
+            metrics['std_probability'] = np.std(all_probs)
+            metrics['min_probability'] = np.min(all_probs)
+            metrics['max_probability'] = np.max(all_probs)
+
+            # Métriques pour arêtes existantes
+            if existing_probs:
+                metrics['existing_avg_prob'] = np.mean(existing_probs)
+                metrics['existing_std_prob'] = np.std(existing_probs)
+
+            # Métriques pour arêtes potentielles
+            if potential_probs:
+                metrics['potential_avg_prob'] = np.mean(potential_probs)
+                metrics['potential_std_prob'] = np.std(potential_probs)
+
+            # Calculer la variance totale (objectif maximisé)
+            total_variance = sum(p * (1 - p) for p in all_probs)
+            metrics['total_variance'] = total_variance
+            metrics['avg_edge_variance'] = total_variance / len(all_probs) if all_probs else 0
+
+            # Tester la résistance au seuillage
+            threshold = 0.5
+            reconstructed = sum(1 for p in all_probs if p > threshold)
+            original_edges_count = len(existing_probs)
+            if original_edges_count > 0:
+                reconstruction_rate = sum(1 for p in existing_probs if p > threshold) / original_edges_count
+                metrics['threshold_resistance'] = 1 - reconstruction_rate  # Plus proche de 1 = meilleur
+                metrics['reconstruction_rate'] = reconstruction_rate
 
     elif method_key == "Generalization":
         if hasattr(G_anon, 'graph') and 'cluster_to_nodes' in G_anon.graph:
@@ -3058,6 +3097,7 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
         st.session_state.anonymized = True
         st.session_state.method_key = method_key
         st.session_state.method_params = dynamic_params  # Sauvegarder les paramètres utilisés
+        st.session_state.show_sample = False  # Réinitialiser l'affichage d'échantillon
 
         # Anonymiser
         anonymizer = GraphAnonymizer(G)
@@ -3087,10 +3127,34 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
             if node_to_cluster is None:
                 st.session_state.node_to_cluster = None
 
+    # Bouton pour tirer un échantillon (seulement pour graphes probabilistes)
+    if 'anonymized' in st.session_state and st.session_state.anonymized:
+        if st.session_state.method_key in ["Probabilistic", "MaxVar"]:
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 🎲 Échantillonnage")
+            st.sidebar.caption("Les méthodes probabilistes publient un graphe incertain. Tirez un échantillon déterministe!")
+
+            if st.sidebar.button("🎲 Tirer un Échantillon", type="secondary"):
+                with st.spinner('Tirage d\'échantillon en cours...'):
+                    G_sample = sample_from_probabilistic_graph(st.session_state.G_anon)
+                    st.session_state.G_sample = G_sample
+                    st.session_state.show_sample = True
+
+            if st.session_state.get('show_sample', False):
+                st.sidebar.success("✅ Échantillon tiré!")
+                st.sidebar.caption(f"Nœuds: {st.session_state.G_sample.number_of_nodes()}, Arêtes: {st.session_state.G_sample.number_of_edges()}")
+
+                if st.sidebar.button("🔄 Afficher graphe incertain", type="secondary"):
+                    st.session_state.show_sample = False
+
     # Affichage des résultats
     if 'anonymized' in st.session_state and st.session_state.anonymized:
         G_orig = st.session_state.G_orig
         G_anon = st.session_state.G_anon
+
+        # Utiliser l'échantillon si disponible pour l'affichage
+        G_display = st.session_state.get('G_sample', G_anon) if st.session_state.get('show_sample', False) else G_anon
+
         current_method = METHODS[st.session_state.method_key]
 
         # Onglets - VERSION AMÉLIORÉE avec 8 onglets
@@ -3108,6 +3172,10 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
         with tab1:
             st.markdown("## 📊 Résultats de l'Anonymisation")
 
+            # Indicateur si on affiche un échantillon
+            if st.session_state.get('show_sample', False):
+                st.info("🎲 **Affichage d'un graphe échantillon** tiré depuis le graphe incertain. Les probabilités ont été converties en arêtes déterministes.")
+
             col1, col2 = st.columns(2)
 
             with col1:
@@ -3115,10 +3183,11 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
                 st.metric("Arêtes Originales", G_orig.number_of_edges())
 
             with col2:
-                if isinstance(G_anon, nx.Graph):
-                    st.metric("Nœuds Anonymisés", G_anon.number_of_nodes())
-                    st.metric("Arêtes Anonymisées", G_anon.number_of_edges(),
-                             delta=f"{G_anon.number_of_edges() - G_orig.number_of_edges():+d}")
+                if isinstance(G_display, nx.Graph):
+                    label = "Échantillon" if st.session_state.get('show_sample', False) else "Anonymisés"
+                    st.metric(f"Nœuds {label}", G_display.number_of_nodes())
+                    st.metric(f"Arêtes {label}", G_display.number_of_edges(),
+                             delta=f"{G_display.number_of_edges() - G_orig.number_of_edges():+d}")
                 else:
                     st.info("Format de graphe non standard (super-nodes)")
 
@@ -3126,7 +3195,8 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
             st.markdown("### Comparaison Visuelle")
 
             node_to_cluster = st.session_state.get('node_to_cluster', None)
-            fig = plot_graph_comparison(G_orig, G_anon, current_method['name'], node_to_cluster)
+            # Utiliser G_display pour la visualisation
+            fig = plot_graph_comparison(G_orig, G_display, current_method['name'], node_to_cluster)
             st.pyplot(fig)
 
             # Afficher les statistiques spécifiques aux super-nodes
@@ -3585,6 +3655,75 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
                     st.markdown("---")
                     confusion = privacy_metrics['confusion_factor']
                     st.info(f"**Facteur de confusion** : {confusion} graphes plausibles")
+
+                elif 'num_potential_edges' in privacy_metrics:
+                    # MaxVar
+                    st.markdown("### 🔒 MaxVar - Métriques de Variance et Dispersion")
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric("Arêtes potentielles ajoutées", privacy_metrics['num_potential_edges'])
+
+                    with col2:
+                        if 'total_variance' in privacy_metrics:
+                            var = privacy_metrics['total_variance']
+                            st.metric("Variance totale", f"{var:.2f}",
+                                     help="Plus élevée = meilleure dispersion des probabilités")
+
+                    with col3:
+                        if 'avg_edge_variance' in privacy_metrics:
+                            avg_var = privacy_metrics['avg_edge_variance']
+                            st.metric("Variance moyenne/arête", f"{avg_var:.3f}")
+
+                    st.markdown("---")
+                    st.markdown("### 📊 Analyse des Probabilités")
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Arêtes existantes (originales)**")
+                        if 'existing_avg_prob' in privacy_metrics:
+                            st.metric("Probabilité moyenne", f"{privacy_metrics['existing_avg_prob']:.3f}")
+                            if 'existing_std_prob' in privacy_metrics:
+                                st.metric("Écart-type", f"{privacy_metrics['existing_std_prob']:.3f}",
+                                         help="Plus élevé = probabilités plus dispersées")
+
+                    with col2:
+                        st.markdown("**Arêtes potentielles (ajoutées)**")
+                        if 'potential_avg_prob' in privacy_metrics:
+                            st.metric("Probabilité moyenne", f"{privacy_metrics['potential_avg_prob']:.3f}")
+                            if 'potential_std_prob' in privacy_metrics:
+                                st.metric("Écart-type", f"{privacy_metrics['potential_std_prob']:.3f}")
+
+                    st.markdown("---")
+                    st.markdown("### 🛡️ Résistance au Seuillage")
+
+                    if 'threshold_resistance' in privacy_metrics:
+                        resistance = privacy_metrics['threshold_resistance']
+                        reconstruction = privacy_metrics.get('reconstruction_rate', 0)
+
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.metric("Taux de résistance", f"{resistance*100:.1f}%",
+                                     help="% d'arêtes originales non récupérables par seuillage à 0.5")
+
+                        with col2:
+                            st.metric("Taux de reconstruction", f"{reconstruction*100:.1f}%",
+                                     help="% d'arêtes originales récupérables par seuillage à 0.5")
+
+                        st.progress(resistance)
+
+                        if resistance > 0.2:
+                            st.success(f"✅ Bonne résistance au seuillage ({resistance*100:.1f}%)")
+                        elif resistance > 0.1:
+                            st.warning(f"⚠️ Résistance modérée ({resistance*100:.1f}%)")
+                        else:
+                            st.error(f"❌ Faible résistance - vulnérable au seuillage ({resistance*100:.1f}%)")
+
+                        st.caption("💡 Un attaquant qui applique un seuil à 0.5 ne récupère que "
+                                  f"{reconstruction*100:.1f}% des arêtes originales (contre 100% pour (k,ε)-obf)")
 
                 elif 'min_cluster_size' in privacy_metrics:
                     # Generalization
