@@ -380,51 +380,46 @@ class GraphAnonymizer:
         (k,ε)-obfuscation basé sur la thèse de Nguyen Huu-Hiep
 
         ═══════════════════════════════════════════════════════════════════════
-        PRINCIPE (selon la thèse, Section 3.3.3) :
+        FORMULE CONFORME À LA THÈSE :
         ═══════════════════════════════════════════════════════════════════════
-        - On transfère de la probabilité des arêtes EXISTANTES vers des
-          arêtes POTENTIELLES (non-existantes)
-        - Plus ε est GRAND → Plus on transfère de probabilité → Plus de privacy
-        - Plus k est GRAND → Plus de graphes candidats plausibles
+        - Arêtes existantes : p = 1 - ε/k
+        - Arêtes potentielles : p = ε/(2k)
 
-        FORMULE (simplifiée pour l'implémentation) :
-        - Arêtes existantes : prob = 1 - r_e où r_e augmente avec ε
-        - Arêtes potentielles : prob = r_e où r_e augmente avec ε
+        VULNÉRABILITÉ : Quand ε est PETIT (ex: 0.3, privacy théorique forte),
+        les probabilités se CONCENTRENT :
+        - p_existantes ≈ 1.0 (ex: 0.94 pour k=5, ε=0.3)
+        - p_potentielles ≈ 0.0 (ex: 0.03 pour k=5, ε=0.3)
+        → Un attaquant applique un seuil à 0.5 et récupère 100% du graphe original!
 
-        CORRECTION : ε GRAND = PLUS DE PRIVACY (et non l'inverse !)
+        UTILITÉ PÉDAGOGIQUE : Cette implémentation correcte montre que suivre
+        la formule mathématique de la thèse ne garantit PAS la sécurité pratique.
+        C'est pourquoi MaxVar a été développé.
         ═══════════════════════════════════════════════════════════════════════
         """
         G = self.original_graph.copy()
         prob_graph = nx.Graph()
         prob_graph.add_nodes_from(G.nodes())
 
-        # Calculer r_e (taux de transfert de probabilité)
-        # Plus ε est grand, plus r_e est grand, plus on transfère de probabilité
-        # Formule ajustée pour avoir un bon gradient visuel
-        r_e = min(0.5, epsilon / (k + 1))  # Borné à 0.5 pour éviter prob < 0.5
+        # FORMULE CONFORME À LA THÈSE
+        prob_existing = 1.0 - (epsilon / k)
+        prob_potential = epsilon / (2 * k)
 
-        # Alternative : utiliser directement epsilon comme dans la thèse
-        # mais avec un scaling pour avoir un meilleur gradient visuel
-        r_e = epsilon * 0.4  # Scaling factor pour avoir des valeurs visibles
-
-        # Arêtes EXISTANTES : probabilité diminue quand ε augmente
-        # (on "transfère" de la probabilité vers les arêtes potentielles)
+        # Arêtes EXISTANTES : probabilité élevée (proche de 1.0 quand ε petit)
         for u, v in G.edges():
-            prob_existing = 1.0 - r_e  # Plus ε grand → r_e grand → prob petite
             prob_graph.add_edge(u, v, probability=prob_existing, is_original=True)
 
         # Ajouter des arêtes POTENTIELLES
+        # Pour chaque nœud, ajouter k arêtes potentielles aléatoires
         non_edges = [(u, v) for u in G.nodes() for v in G.nodes()
                      if u < v and not G.has_edge(u, v)]
 
-        # Nombre d'arêtes potentielles : augmente avec k (plus de candidats)
-        # et avec ε (plus de confusion)
-        num_to_add = min(int(len(non_edges) * 0.4), int(G.number_of_edges() * (k / 5)))
-        edges_to_add = random.sample(non_edges, min(num_to_add, len(non_edges)))
+        # Nombre d'arêtes potentielles : environ k arêtes par nœud
+        # (comme spécifié dans la définition de N_k(v))
+        num_to_add = min(len(non_edges), k * G.number_of_nodes() // 2)
+        edges_to_add = random.sample(non_edges, num_to_add)
 
-        # Arêtes POTENTIELLES : probabilité augmente quand ε augmente
+        # Arêtes POTENTIELLES : probabilité faible (proche de 0.0 quand ε petit)
         for u, v in edges_to_add:
-            prob_potential = r_e  # Plus ε grand → r_e grand → prob grande
             prob_graph.add_edge(u, v, probability=prob_potential, is_original=False)
 
         return prob_graph
