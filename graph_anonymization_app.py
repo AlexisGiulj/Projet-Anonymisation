@@ -702,7 +702,7 @@ La **k-degree anonymity** fournit une garantie formelle : chaque nœud doit êtr
 
 **Intuition** : Si un attaquant connaît le degré d'un nœud cible (ex: 5 amis),
 il doit y avoir au moins k nœuds avec ce même degré. L'attaquant ne peut donc
-identifier le nœud cible qu'avec une probabilité ≤ 1/k.
+identifier le nœud cible qu'avec une probabilité $\\leq 1/k$.
 
 **Exemple** : Avec k=3, si Alice a 7 amis, on s'assure qu'au moins 2 autres
 personnes ont aussi 7 amis. L'attaquant ne peut pas dire laquelle est Alice.
@@ -715,7 +715,7 @@ L'algorithme ajoute des arêtes de manière **déterministe** pour atteindre cet
 
 Un graphe G = (V, E) satisfait la k-degree anonymity si :
 
-∀d ∈ {deg(v) : v ∈ V}, |{v ∈ V : deg(v) = d}| ≥ k
+$$\\forall d \\in \\{\\deg(v) : v \\in V\\}, |\\{v \\in V : \\deg(v) = d\\}| \\geq k$$
 
 C'est-à-dire : pour tout degré d qui apparaît dans le graphe,
 il doit y avoir au moins k nœuds avec ce degré.
@@ -778,7 +778,7 @@ Pour DIMINUER un degré (current > target):
 - Distribution originale : {1: 1, 2: 11, 3: 6, 9: 1, 10: 1, 12: 1, 16: 1, 17: 1}
   - Degrés violants : 1, 9, 10, 12, 16, 17 (< 2 occurrences)
 - Après anonymisation : {1: 6, 2: 7, 3: 8, 4: 2, 5: 2, 8: 9}
-  - ✅ Tous les degrés ≥ 2 occurrences
+  - ✅ Tous les degrés $\\geq$ 2 occurrences
   - Modification : -14.1% d'arêtes
 
 **Propriétés** :
@@ -789,7 +789,7 @@ Pour DIMINUER un degré (current > target):
 
 **Garantie de privacy** :
 
-P(identité de v | deg(v) = d) ≤ 1/k
+$$P(\\text{identité de } v | \\deg(v) = d) \\leq \\frac{1}{k}$$
 
 **NP-complétude** : Trouver le nombre minimum d'arêtes à ajouter est NP-difficile.
 
@@ -804,7 +804,7 @@ P(identité de v | deg(v) = d) ≤ 1/k
         "name": "Généralisation - Super-nodes",
         "category": "3. Anonymisation par Généralisation",
         "params": {"k": 4},
-        "description_short": "Regroupe les nœuds en super-nœuds de taille ≥ k",
+        "description_short": "Regroupe les nœuds en super-nœuds de taille $\\geq k$",
         "description": """
 ### Principe en Langage Naturel
 
@@ -827,25 +827,25 @@ les arêtes, on **regroupe** les nœuds similaires en "super-nœuds".
 **Modèle de graphe généralisé** :
 
 Soit G = (V, E) le graphe original. On crée une partition P = {C₁, C₂, ..., Cₘ}
-de V telle que |Cᵢ| ≥ k ∀i.
+de V telle que $|C_i| \\geq k \\; \\forall i$.
 
 Le **super-graphe** G* = (V*, E*) est défini par :
 - V* = {C₁, C₂, ..., Cₘ} (les clusters)
-- E* = {(Cᵢ, Cⱼ) : ∃(u,v) ∈ E avec u ∈ Cᵢ, v ∈ Cⱼ}
+- $E^* = \\{(C_i, C_j) : \\exists(u,v) \\in E \\text{ avec } u \\in C_i, v \\in C_j\\}$
 
 Chaque super-arête (Cᵢ, Cⱼ) a un **poids** :
 
-w(Cᵢ, Cⱼ) = |{(u,v) ∈ E : u ∈ Cᵢ, v ∈ Cⱼ}|
+$$w(C_i, C_j) = |\\{(u,v) \\in E : u \\in C_i, v \\in C_j\\}|$$
 
 **Probabilité d'arête dans le cluster** :
 
-P(edge | Cᵢ, Cⱼ) = w(Cᵢ, Cⱼ) / (|Cᵢ| × |Cⱼ|)
+$$P(\\text{edge} | C_i, C_j) = \\frac{w(C_i, C_j)}{|C_i| \\times |C_j|}$$
 
 **Garantie de privacy** : Un individu est caché parmi au moins k-1 autres
 dans son cluster.
 
 **Problème d'optimisation** : Trouver la partition P qui minimise la perte
-d'information tout en respectant |Cᵢ| ≥ k est NP-difficile.
+d'information tout en respectant $|C_i| \\geq k$ est NP-difficile.
 
 **Complexité** : O(n²) à O(n³) selon l'algorithme de clustering
         """,
@@ -888,7 +888,7 @@ Un graphe incertain est un triplet G̃ = (V, E, p) où :
 **Définition (k,ε)-obfuscation** :
 
 Pour tout nœud v ∈ V, l'entropie de Shannon de la distribution
-de probabilité sur les k voisins candidats doit être ≥ log(k) - ε :
+de probabilité sur les k voisins candidats doit être $\\geq \\log(k) - \\varepsilon$ :
 
 $$H(N_k(v)) = -\\sum_i p_i \\log(p_i) \\geq \\log(k) - \\varepsilon$$
 
@@ -908,7 +908,7 @@ $$p((u,v)) = \\frac{\\varepsilon}{2k}$$
 
 À partir de G̃, on peut générer des graphes compatibles en échantillonnant :
 
-G_sample = (V, E_sample) où e ∈ E_sample ssi X_e ≤ p(e), X_e ~ U[0,1]
+$$G_{sample} = (V, E_{sample}) \\text{ où } e \\in E_{sample} \\text{ ssi } X_e \\leq p(e), X_e \\sim U[0,1]$$
 
 **Propriété** : L'espérance des degrés est préservée.
 
@@ -919,8 +919,8 @@ G_sample = (V, E_sample) où e ∈ E_sample ssi X_e ≤ p(e), X_e ~ U[0,1]
 L'implémentation actuelle de (k,ε)-obfuscation a une **faille majeure** :
 
 **Problème** :
-- Arêtes existantes : probabilité ≈ 1.0
-- Arêtes potentielles : probabilité ≈ 0.0
+- Arêtes existantes : probabilité $\\approx$ 1.0
+- Arêtes potentielles : probabilité $\\approx$ 0.0
 - **Un attaquant peut appliquer un seuil à 0.5 et récupérer EXACTEMENT le graphe original!**
 
 **Pourquoi ?** Comme mentionné dans la thèse (Section 3.3.3) :
@@ -1003,7 +1003,7 @@ aléatoires entre nœuds distants!
 ```
 1. Construire la matrice A_eq : ligne u, colonne (u,v) → 1
 2. Vecteur b_eq : degree(u) pour chaque nœud u
-3. Résoudre: min Σp² sous contrainte A_eq @ p = b_eq
+3. Résoudre: min Σ p² sous contrainte A_eq @ p = b_eq
 4. Utiliser SLSQP (Sequential Least Squares Programming)
 ```
 
@@ -1017,13 +1017,13 @@ aléatoires entre nœuds distants!
 **Propriétés mathématiques** :
 
 1. **Conservation des degrés attendus** :
-   E[degree(u) dans G̃] = degree(u) dans G_0  ∀u
+   $$\\mathbb{E}[\\deg(u) \\text{ dans } \\tilde{G}] = \\deg(u) \\text{ dans } G_0 \\quad \\forall u$$
 
 2. **Maximisation de la variance** :
-   Var[D(G̃, G)] est maximale sous contraintes
+   $$\\text{Var}[D(\\tilde{G}, G)] \\text{ est maximale sous contraintes}$$
 
 3. **Résistance au seuillage** :
-   Les probabilités NE sont PAS concentrées à 0/1, donc threshold(G̃, 0.5) ≠ G_0
+   Les probabilités NE sont PAS concentrées à 0/1, donc $\\text{threshold}(\\tilde{G}, 0.5) \\neq G_0$
 
 **Exemple numérique** (Karate Club) :
 
@@ -1036,9 +1036,9 @@ Arête potentielle (5,12) :
 - MaxVar : p = 0.42 (dispersé) → **ambiguë**
 
 **Complexité** :
-- Phase 1 : O(Σ degree(u)²) ≈ O(n · d_avg²)
-- Phase 2 : O(m²) pour l'optimisation quadratique
-- Phase 3 : O(m) pour l'échantillonnage
+- Phase 1 : $O(\\sum \\deg(u)^2) \\approx O(n \\cdot d_{avg}^2)$
+- Phase 2 : $O(m^2)$ pour l'optimisation quadratique
+- Phase 3 : $O(m)$ pour l'échantillonnage
 
 Total : **O(m²)** (peut être réduit avec partitionnement du graphe)
 
@@ -1154,8 +1154,8 @@ Donc EdgeFlip satisfait ε-edge-DP.
 
 **Espérance du nombre d'arêtes** :
 
-E[|E_output|] = |E| · (1 - s/2) + (n(n-1)/2 - |E|) · s/2
-              ≈ n(n-1)/4  (pour s ≈ 1, très bruité)
+$$\\mathbb{E}[|E_{output}|] = |E| \\cdot (1 - s/2) + (n(n-1)/2 - |E|) \\cdot s/2$$
+$$\\approx n(n-1)/4 \\text{  (pour } s \\approx 1\\text{, très bruité)}$$
 
 **Complexité** : O(n²)
 
@@ -1200,16 +1200,18 @@ où Y_i ~ Lap(Δf/ε) sont indépendants et Δf est la sensibilité globale.
 
 **Sensibilité globale** :
 
-Δf = max_{G,G' voisins} ||f(G) - f(G')||₁
+$$\\Delta f = \\max_{G,G' \\text{ voisins}} ||f(G) - f(G')||_1$$
 
 Pour les graphes (edge-DP), deux graphes sont voisins s'ils diffèrent par une arête.
-Donc : Δf = 1 pour une requête de type "cette arête existe-t-elle ?"
+Donc : $\\Delta f = 1$ pour une requête de type "cette arête existe-t-elle ?"
 
 **Distribution de Laplace** :
 
-Lap(b) a la densité : p(x|b) = (1/2b) · exp(-|x|/b)
+$\\text{Lap}(b)$ a la densité :
+$$p(x|b) = \\frac{1}{2b} \\cdot \\exp\\left(-\\frac{|x|}{b}\\right)$$
+
 - Moyenne : 0
-- Variance : 2b²
+- Variance : $2b^2$
 - Plus b est grand, plus le bruit est important
 
 **Application aux graphes** :
@@ -1234,9 +1236,9 @@ Retourner G_output = (V, E_output)
 **Preuve (sketch)** :
 Pour G et G' différant par une arête (u₀, v₀) :
 
-P[M(G) = O] / P[M(G') = O] = exp(-ε·|f(G)-f(G')|) ≤ e^ε
+$$\\frac{P[M(G) = O]}{P[M(G') = O]} = \\exp(-\\varepsilon \\cdot |f(G)-f(G')|) \\leq e^\\varepsilon$$
 
-car |f(G) - f(G')| ≤ Δf = 1.
+car $|f(G) - f(G')| \\leq \\Delta f = 1$.
 
 **Trade-off ε** :
 - ε petit (ex: 0.1) : forte privacy, beaucoup de bruit, faible utilité
@@ -2776,51 +2778,51 @@ METRIC_DEFINITIONS = {
     'avg_degree': {
         'name': 'Degré Moyen (S_AD)',
         'definition': "Nombre moyen de voisins par nœud",
-        'formula': "d_avg = (1/n) × Σ deg(v)",
+        'formula': r"d_{avg} = \frac{1}{n} \sum_{v \in V} \deg(v)",
         'interpretation': "Mesure la connectivité moyenne du graphe"
     },
     'max_degree': {
         'name': 'Degré Maximal (S_MD)',
         'definition': "Plus grand nombre de voisins d'un nœud",
-        'formula': "d_max = max{deg(v)}",
+        'formula': r"d_{max} = \max_{v \in V} \deg(v)",
         'interpretation': "Identifie les hubs (nœuds très connectés)"
     },
     'degree_variance': {
         'name': 'Variance des Degrés (S_DV)',
         'definition': "Dispersion des degrés autour de la moyenne",
-        'formula': "σ² = (1/n) × Σ (deg(v) - d_avg)²",
+        'formula': r"\sigma^2 = \frac{1}{n} \sum_{v \in V} (\deg(v) - d_{avg})^2",
         'interpretation': "Élevée = hétérogénéité (hubs + nœuds peu connectés)"
     },
     'power_law_exponent': {
         'name': 'Exposant Power-Law (S_PL)',
         'definition': "Caractérise la distribution des degrés pour les réseaux scale-free",
-        'formula': "P(k) ∝ k^(-γ) où γ est estimé par régression log-log",
-        'interpretation': "γ ∈ [2,3] typique pour réseaux sociaux (loi de puissance)"
+        'formula': r"P(k) \propto k^{-\gamma} \text{ où } \gamma \text{ est estimé par régression log-log}",
+        'interpretation': r"\gamma \in [2,3] \text{ typique pour réseaux sociaux (loi de puissance)}"
     },
 
     # Groupe 2: Shortest path-based
     'diameter': {
         'name': 'Diamètre (S_Diam)',
         'definition': "Plus grande distance entre deux nœuds connectés",
-        'formula': "D = max{d(u,v)} pour tous les couples",
+        'formula': r"D = \max_{u,v \in V} d(u,v)",
         'interpretation': "Borne supérieure sur toutes les distances"
     },
     'avg_shortest_path': {
         'name': 'Distance Moyenne (S_APD)',
         'definition': "Longueur moyenne des plus courts chemins entre tous les couples",
-        'formula': "L = (2/(n(n-1))) × Σ d(u,v)",
+        'formula': r"L = \frac{2}{n(n-1)} \sum_{u,v \in V} d(u,v)",
         'interpretation': "Mesure la compacité du réseau (propriété small-world)"
     },
     'effective_diameter': {
         'name': 'Diamètre Effectif (S_EDiam)',
         'definition': "90e percentile des distances (plus robuste que le diamètre)",
-        'formula': "D_eff = Percentile_90{d(u,v)}",
-        'interpretation': "90% des nœuds sont à distance ≤ D_eff"
+        'formula': r"D_{eff} = \text{Percentile}_{90}\{d(u,v)\}",
+        'interpretation': r"90\% \text{ des nœuds sont à distance } \leq D_{eff}"
     },
     'connectivity_length': {
         'name': 'Longueur de Connectivité (S_CL)',
         'definition': "Moyenne harmonique des distances (privilégie les courtes distances)",
-        'formula': "CL = n(n-1) / Σ(1/d(u,v))",
+        'formula': r"CL = \frac{n(n-1)}{\sum_{u,v} \frac{1}{d(u,v)}}",
         'interpretation': "Plus faible = meilleure connectivité locale"
     },
 
@@ -2834,7 +2836,7 @@ METRIC_DEFINITIONS = {
     'avg_clustering': {
         'name': 'Clustering Moyen',
         'definition': "Moyenne des coefficients de clustering locaux",
-        'formula': "C_avg = (1/n) × Σ C(v) où C(v) = triangles(v) / triples(v)",
+        'formula': r"C_{avg} = \frac{1}{n} \sum_{v \in V} C(v) \text{ où } C(v) = \frac{\text{triangles}(v)}{\text{triples}(v)}",
         'interpretation': "Mesure alternative du clustering (locale → globale)"
     },
 
@@ -2856,13 +2858,13 @@ METRIC_DEFINITIONS = {
     'min_cluster_size': {
         'name': 'Taille Min. Cluster',
         'definition': "Plus petit nombre de nœuds dans un cluster",
-        'formula': "min{|C_i|}",
-        'interpretation': "Doit être ≥ k pour garantir k-anonymity"
+        'formula': r"\min_i |C_i|",
+        'interpretation': r"\text{Doit être } \geq k \text{ pour garantir k-anonymity}"
     },
     'avg_cluster_size': {
         'name': 'Taille Moy. Cluster',
         'definition': "Nombre moyen de nœuds par cluster",
-        'formula': "avg{|C_i|} = n / k",
+        'formula': r"\text{avg}\{|C_i|\} = \frac{n}{k}",
         'interpretation': "Plus élevé = clusters plus gros = plus de privacy"
     },
     'intra_cluster_edges': {
@@ -3030,10 +3032,10 @@ def main():
         epsilon_value = st.sidebar.slider(
             "ε = Taux de transfert de probabilité",
             min_value=0.1,
-            max_value=1.0,
+            max_value=10.0,
             value=method['params']['epsilon'],
             step=0.1,
-            help="⚠️ ATTENTION : Plus ε est GRAND, plus on transfère de probabilité des arêtes existantes vers les potentielles → PLUS DE PRIVACY ! (ε=0.1: faible privacy, ε=1.0: forte privacy)"
+            help="⚠️ ATTENTION : Plus ε est GRAND, plus on transfère de probabilité des arêtes existantes vers les potentielles → PLUS DE PRIVACY ! Avec ε grand (ex: 5.0), p_exist diminue et p_potential augmente, rendant le graphe plus anonymisé."
         )
         dynamic_params['k'] = k_value
         dynamic_params['epsilon'] = epsilon_value
