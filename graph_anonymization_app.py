@@ -890,17 +890,19 @@ Un graphe incertain est un triplet G̃ = (V, E, p) où :
 Pour tout nœud v ∈ V, l'entropie de Shannon de la distribution
 de probabilité sur les k voisins candidats doit être ≥ log(k) - ε :
 
-H(N_k(v)) = -∑ᵢ p_i log(p_i) ≥ log(k) - ε
+$$H(N_k(v)) = -\\sum_i p_i \\log(p_i) \\geq \\log(k) - \\varepsilon$$
 
-où N_k(v) sont les k nœuds les plus susceptibles d'être voisins de v.
+où $N_k(v)$ sont les k nœuds les plus susceptibles d'être voisins de v.
 
 **Assignation des probabilités** :
 
 Pour les arêtes existantes :
-p((u,v)) = 1 - ε/k
+
+$$p((u,v)) = 1 - \\frac{\\varepsilon}{k}$$
 
 Pour les arêtes potentielles (ajoutées pour l'obfuscation) :
-p((u,v)) = ε/(2k)
+
+$$p((u,v)) = \\frac{\\varepsilon}{2k}$$
 
 **Graphe d'exemple (sample graph)** :
 
@@ -964,25 +966,23 @@ la reconstruction du graphe original par simple seuillage!
 
 L'algorithme résout un programme d'optimisation quadratique :
 
-```
-Minimiser:  Σ p_i²    (équivalent à maximiser Σ p_i(1-p_i))
-           i∈E
+$$\\min \\sum_{i \\in E} p_i^2$$
 
 Contraintes:
-  0 ≤ p_i ≤ 1                    ∀i ∈ E
-  Σ p_uv = degree(u)             ∀u ∈ V
-  v∈N(u)
-```
 
-où E contient à la fois les arêtes existantes ET les arêtes potentielles.
+$$0 \\leq p_i \\leq 1 \\quad \\forall i \\in E$$
 
-**Pourquoi minimiser Σp_i²?**
+$$\\sum_{v \\in N(u)} p_{uv} = \\deg(u) \\quad \\forall u \\in V$$
+
+où $E$ contient à la fois les arêtes existantes ET les arêtes potentielles.
+
+**Pourquoi minimiser $\\sum p_i^2$?**
 
 La variance de la distance d'édition (Théorème 3.3, thèse) est :
 
-Var[D(G̃, G)] = Σ p_i(1 - p_i) = |E_original| - Σ p_i²
+$$\\text{Var}[D(\\tilde{G}, G)] = \\sum_i p_i(1 - p_i) = |E_{\\text{original}}| - \\sum_i p_i^2$$
 
-Donc **minimiser Σp_i²** équivaut à **maximiser la variance**, ce qui maximise
+Donc **minimiser $\\sum p_i^2$** équivaut à **maximiser la variance**, ce qui maximise
 l'incertitude sur le graphe!
 
 **Algorithme (3 phases)** :
@@ -1095,12 +1095,12 @@ est protégée avec garantie mathématique ε-DP.
 
 **Définition ε-Differential Privacy** :
 
-Un algorithme A satisfait ε-DP si pour tous graphes voisins G, G'
-(différant par une arête) et pour tout output O :
+Un algorithme $\\mathcal{A}$ satisfait ε-DP si pour tous graphes voisins $G, G'$
+(différant par une arête) et pour tout output $O$ :
 
-P[A(G) = O] ≤ e^ε · P[A(G') = O]
+$$P[\\mathcal{A}(G) = O] \\leq e^\\varepsilon \\cdot P[\\mathcal{A}(G') = O]$$
 
-Plus ε est petit, plus forte est la garantie de privacy.
+Plus $\\varepsilon$ est petit, plus forte est la garantie de privacy.
 
 **Algorithme EdgeFlip (en langage naturel)** :
 
@@ -1113,7 +1113,9 @@ Pour chaque paire de nœuds possible (u, v) dans le graphe :
    - Si l'arête existe → la garder
    - Si l'arête n'existe pas → ne rien faire
 
-Le paramètre s dépend du budget privacy ε selon : **s = 2/(e^ε + 1)**
+Le paramètre s dépend du budget privacy ε selon :
+
+$$s = \\frac{2}{e^\\varepsilon + 1}$$
 
 **Trade-off** :
 - ε petit (0.1) → s = 0.95 → flip 47.5% des arêtes → **forte privacy**
@@ -3331,7 +3333,7 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
             with st.expander("📝 Définition Formelle", expanded=True):
                 st.markdown(concept['definition'])
                 st.markdown("**Formule mathématique** :")
-                st.code(concept['math_formula'], language="text")
+                st.latex(concept['math_formula'])
 
             with st.expander("💡 Intuition (Explication en langage naturel)", expanded=True):
                 st.markdown(concept['intuition'])
@@ -4019,7 +4021,7 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
                     st.markdown(prop['definition'])
 
                 with st.expander("🔢 Formule"):
-                    st.code(prop['formula'], language='text')
+                    st.latex(prop['formula'])
 
                 with st.expander("💡 Exemple"):
                     st.info(prop['example'])
