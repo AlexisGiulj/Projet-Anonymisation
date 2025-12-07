@@ -1342,7 +1342,14 @@ def plot_graph_comparison(G_orig, G_anon, method_name, node_to_cluster=None):
 
 
 def plot_degree_distribution(G_orig, G_anon, method_name):
-    """Compare les distributions de degrés"""
+    """
+    Compare les distributions de degrés.
+
+    Gère 3 cas spéciaux :
+    1. Graphe probabiliste → Échantillonner avant de calculer
+    2. Super-graphe → Tirage uniforme depuis les clusters
+    3. Graphe classique → Distribution standard
+    """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
     # Distribution originale
@@ -1357,19 +1364,88 @@ def plot_degree_distribution(G_orig, G_anon, method_name):
 
     # Distribution anonymisée
     if isinstance(G_anon, nx.Graph) and G_anon.number_of_nodes() > 0:
-        if set(G_anon.nodes()).issubset(set(G_orig.nodes())):
-            degrees_anon = [d for n, d in G_anon.degree()]
-            ax2.hist(degrees_anon, bins=range(max(degrees_anon)+2),
-                    alpha=0.7, color='green', edgecolor='black', rwidth=0.8)
+        # CAS 1 : Détecter si c'est un super-graphe (généralisation)
+        is_super_graph = False
+        if G_anon.number_of_nodes() > 0:
+            first_node = list(G_anon.nodes())[0]
+            node_data = G_anon.nodes[first_node]
+            is_super_graph = 'cluster_size' in node_data
+
+        if is_super_graph:
+            # TIRAGE UNIFORME depuis le super-graphe pour recréer une distribution
+            degrees_reconstructed = []
+
+            # Pour chaque cluster
+            for cluster_id in G_anon.nodes():
+                cluster_size = G_anon.nodes[cluster_id]['cluster_size']
+                internal_edges = G_anon.nodes[cluster_id]['internal_edges']
+
+                # Compter les arêtes inter-cluster pour ce cluster
+                inter_edges_count = 0
+                for neighbor in G_anon.neighbors(cluster_id):
+                    if neighbor != cluster_id:  # Exclure self-loops
+                        inter_edges_count += G_anon[cluster_id][neighbor]['weight']
+
+                # Estimer le degré moyen dans ce cluster
+                # Degré interne moyen ≈ 2 × internal_edges / cluster_size
+                avg_internal_degree = (2 * internal_edges) / cluster_size if cluster_size > 0 else 0
+
+                # Degré externe moyen ≈ inter_edges_count / cluster_size
+                avg_external_degree = inter_edges_count / cluster_size if cluster_size > 0 else 0
+
+                # Degré total moyen pour les nœuds de ce cluster
+                avg_degree = avg_internal_degree + avg_external_degree
+
+                # Tirer des degrés avec une petite variance (± 20%)
+                for _ in range(cluster_size):
+                    # Ajouter un peu de bruit pour simuler la variabilité
+                    degree = int(max(0, avg_degree + np.random.normal(0, avg_degree * 0.2)))
+                    degrees_reconstructed.append(degree)
+
+            ax2.hist(degrees_reconstructed, bins=range(max(degrees_reconstructed)+2) if degrees_reconstructed else [0],
+                    alpha=0.7, color='orange', edgecolor='black', rwidth=0.8)
             ax2.set_xlabel('Degré', fontsize=12)
             ax2.set_ylabel('Nombre de nœuds', fontsize=12)
-            ax2.set_title(f'Distribution des degrés - {method_name}', fontsize=14, fontweight='bold')
+            ax2.set_title(f'Distribution des degrés - {method_name}\n(Tirage uniforme depuis clusters)',
+                         fontsize=14, fontweight='bold')
             ax2.grid(True, alpha=0.3, linestyle='--')
             ax2.set_axisbelow(True)
+
         else:
-            ax2.text(0.5, 0.5, 'Distribution non comparable\n(nœuds différents)',
-                    ha='center', va='center', fontsize=12)
-            ax2.axis('off')
+            # CAS 2 : Détecter si c'est un graphe probabiliste
+            is_probabilistic = False
+            if G_anon.number_of_edges() > 0:
+                first_edge = list(G_anon.edges())[0]
+                is_probabilistic = 'probability' in G_anon[first_edge[0]][first_edge[1]]
+
+            if is_probabilistic:
+                # ÉCHANTILLONNER le graphe probabiliste
+                G_sample = sample_from_probabilistic_graph(G_anon)
+                degrees_anon = [d for n, d in G_sample.degree()]
+
+                ax2.hist(degrees_anon, bins=range(max(degrees_anon)+2) if degrees_anon else [0],
+                        alpha=0.7, color='purple', edgecolor='black', rwidth=0.8)
+                ax2.set_xlabel('Degré', fontsize=12)
+                ax2.set_ylabel('Nombre de nœuds', fontsize=12)
+                ax2.set_title(f'Distribution des degrés - {method_name}\n(Échantillon)',
+                             fontsize=14, fontweight='bold')
+                ax2.grid(True, alpha=0.3, linestyle='--')
+                ax2.set_axisbelow(True)
+
+            # CAS 3 : Graphe classique
+            elif set(G_anon.nodes()).issubset(set(G_orig.nodes())):
+                degrees_anon = [d for n, d in G_anon.degree()]
+                ax2.hist(degrees_anon, bins=range(max(degrees_anon)+2),
+                        alpha=0.7, color='green', edgecolor='black', rwidth=0.8)
+                ax2.set_xlabel('Degré', fontsize=12)
+                ax2.set_ylabel('Nombre de nœuds', fontsize=12)
+                ax2.set_title(f'Distribution des degrés - {method_name}', fontsize=14, fontweight='bold')
+                ax2.grid(True, alpha=0.3, linestyle='--')
+                ax2.set_axisbelow(True)
+            else:
+                ax2.text(0.5, 0.5, 'Distribution non comparable\n(nœuds différents)',
+                        ha='center', va='center', fontsize=12)
+                ax2.axis('off')
     else:
         ax2.text(0.5, 0.5, 'Pas de distribution\n(format non standard)',
                 ha='center', va='center', fontsize=12)
@@ -2494,18 +2570,35 @@ def main():
             max_value=3.0,
             value=method['params']['epsilon'],
             step=0.1,
-            help="Budget de privacy différentielle (plus petit = plus de privacy, moins d'utilité)"
+            help="""⚠️ ATTENTION - Paradoxe de la Privacy Différentielle:
+
+ε PETIT = FORTE privacy (mais graphe PROCHE de l'original!)
+ε GRAND = FAIBLE privacy (graphe TRES DIFFERENT de l'original)
+
+En DP, la privacy vient de l'indistinguishability, pas du bruit!
+
+• ε = 0.1 (petit): flip_prob = 4.8% → peu de changements → FORTE privacy
+• ε = 1.0 (moyen): flip_prob = 31.6% → changements modérés → privacy moyenne
+• ε = 3.0 (grand): flip_prob = 47.5% → beaucoup de changements → FAIBLE privacy
+
+Formule: s = 1 - e^(-ε), flip_probability = s/2"""
         )
         dynamic_params['epsilon'] = epsilon_value
 
-        # Afficher l'impact du budget
+        # Afficher l'impact du budget avec explication du paradoxe
         privacy_loss = np.exp(epsilon_value)
+        s = 1 - np.exp(-epsilon_value)
+        flip_prob = s / 2
+
         if epsilon_value < 1.0:
-            st.sidebar.success(f"✅ Privacy Forte (perte ≤ {privacy_loss:.2f}x)")
+            st.sidebar.success(f"✅ Privacy Forte (ε={epsilon_value:.1f})")
+            st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Graphe proche de l'original")
         elif epsilon_value < 2.0:
-            st.sidebar.warning(f"⚠️ Privacy Moyenne (perte ≤ {privacy_loss:.2f}x)")
+            st.sidebar.warning(f"⚠️ Privacy Moyenne (ε={epsilon_value:.1f})")
+            st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Modifications modérées")
         else:
-            st.sidebar.error(f"❌ Privacy Faible (perte ≤ {privacy_loss:.2f}x)")
+            st.sidebar.error(f"❌ Privacy Faible (ε={epsilon_value:.1f})")
+            st.sidebar.caption(f"Flip: {flip_prob*100:.1f}% | Graphe très différent")
 
     # Bouton pour anonymiser
     st.sidebar.markdown("---")
@@ -2674,6 +2767,23 @@ def main():
             fig_dist = plot_degree_distribution(G_orig, G_anon, current_method['name'])
             st.pyplot(fig_dist)
 
+            # Explication de la méthode actuelle (déplacée depuis tab2)
+            st.markdown("---")
+            st.markdown(f"### 🔬 Explication : {current_method['name']}")
+
+            with st.expander("📚 Détails de la méthode", expanded=False):
+                st.markdown(current_method['description'])
+                st.markdown("**Formule** :")
+                st.latex(current_method['formula'])
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**🔒 Niveau de Privacy**")
+                    st.info(current_method['privacy_level'])
+                with col2:
+                    st.markdown("**📊 Préservation de l'Utilité**")
+                    st.info(current_method['utility_preservation'])
+
         with tab2:
             st.markdown("## 📖 Définitions des Concepts d'Anonymisation")
 
@@ -2712,22 +2822,6 @@ def main():
 
             with st.expander("⚙️ Signification des Paramètres"):
                 st.markdown(concept['parameter_meaning'])
-
-            st.markdown("---")
-            st.markdown(f"### 🔬 Méthode Actuelle : {current_method['name']}")
-
-            with st.expander("📚 Explication de la méthode actuelle"):
-                st.markdown(current_method['description'])
-                st.markdown("**Formule** :")
-                st.latex(current_method['formula'])
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**🔒 Niveau de Privacy**")
-                    st.info(current_method['privacy_level'])
-                with col2:
-                    st.markdown("**📊 Préservation de l'Utilité**")
-                    st.info(current_method['utility_preservation'])
 
         with tab3:
             st.markdown("## 📈 Métriques d'Utilité du Graphe")
