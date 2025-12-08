@@ -190,21 +190,6 @@ ATTACKS_DICTIONARY = {
         "severity": "Très élevée - Très efficace si connaissance du voisinage disponible"
     },
 
-    "walk_based_attack": {
-        "name": "Attaque par Marche Aléatoire",
-        "description": """
-        L'adversaire utilise les propriétés des marches aléatoires (random walks)
-        sur le graphe pour identifier des nœuds par leurs statistiques de visite.
-        """,
-        "example": """
-        **Exemple** : Les nœuds ayant beaucoup de connexions (hubs) sont plus souvent
-        visités par les marches aléatoires. Cette propriété peut être exploitée même
-        si les degrés sont anonymisés.
-        """,
-        "protection": "Differential Privacy avec mécanisme sur les marches aléatoires",
-        "severity": "Moyenne - Nécessite sophistication mais contourne certaines défenses"
-    },
-
     "auxiliary_info_attack": {
         "name": "Attaque par Information Auxiliaire",
         "description": """
