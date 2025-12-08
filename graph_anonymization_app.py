@@ -981,6 +981,11 @@ on **maximise la variance totale des degrés** tout en préservant les degrés a
 **Résultat** : Les probabilités sont **dispersées** autour de 0.5, rendant impossible
 la reconstruction du graphe original par simple seuillage!
 
+💡 **Note sur la distance d'édition** : MaxVar propose des arêtes "nearby" (à distance 2) au lieu
+d'arêtes aléatoires, ce qui **minimise la distance d'édition** entre le graphe original et les graphes
+échantillonnés. Cela préserve mieux la structure locale du graphe (voir métrique "Distance d'Édition"
+dans les propriétés pour plus de détails).
+
 **Analogie** : Imaginons que vous voulez cacher quelle porte est la vraie parmi 10 portes :
 - **(k,ε)-obf** : Porte vraie = 99% de chance, portes fausses = 1% → **Trop évident!**
 - **MaxVar** : Toutes les portes ont des probabilités variées entre 30% et 70% → **Confusion maximale!**
@@ -1076,7 +1081,8 @@ Total : **O(m²)** (peut être réduit avec partitionnement du graphe)
 | **Préservation degrés** | Approximative | ✅ Exacte |
 | **Arêtes proposées** | Aléatoires | ✅ Nearby (distance 2) |
 | **Variance** | Minimale | ✅ Maximale |
-| **Complexité** | O(|E| + kn) | O(m²) |
+| **Complexité** | O(m + kn) | O(m²) |
+| **Distance d'édition** | Élevée (arêtes aléatoires) | ✅ Faible (arêtes nearby) |
 
 **Trade-off** : MaxVar est plus coûteux en calcul mais offre de meilleures garanties
 de privacy et d'utilité.

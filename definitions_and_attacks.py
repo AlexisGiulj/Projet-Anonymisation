@@ -335,6 +335,15 @@ GRAPH_PROPERTIES = {
         "utility_importance": "Moyenne - Révèle les patterns de connexion",
         "privacy_risk": "Faible - Information globale agrégée",
         "example": "r > 0 : les hubs se connectent entre eux ; r < 0 : les hubs se connectent aux nœuds peu connectés"
+    },
+
+    "edit_distance": {
+        "name": "Distance d'Édition",
+        "definition": "Nombre minimum d'opérations (ajout ou suppression d'arêtes) pour transformer le graphe original en graphe anonymisé",
+        "formula": "d(G, G') = |E△E'| = |E\\E'| + |E'\\E|",
+        "utility_importance": "Critique - Mesure directe de la modification du graphe",
+        "privacy_risk": "N/A - Métrique d'utilité (plus la distance est faible, meilleure est l'utilité)",
+        "example": "Si 10 arêtes sont ajoutées et 5 supprimées, la distance d'édition est 15"
     }
 }
 
