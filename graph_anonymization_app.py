@@ -834,6 +834,31 @@ les arêtes, on **regroupe** les nœuds similaires en "super-nœuds".
 
 **Inconvénient** : Perte importante d'information structurelle fine.
 
+### Algorithme de Clustering Implémenté
+
+L'implémentation utilise une approche **Label Propagation** avec ajustements pour garantir $|C_i| \\geq k$ :
+
+**Étape 1 - Clustering initial** :
+- Utilisation de l'algorithme **Label Propagation** (propagation d'étiquettes)
+- Chaque nœud adopte l'étiquette la plus fréquente parmi ses voisins
+- Converge rapidement vers des communautés naturelles du graphe
+
+**Étape 2 - Ajustement des tailles** :
+```
+TANT QUE il existe des clusters < k :
+  SI trop de clusters :
+    → Fusionner les 2 plus petits clusters
+  SI pas assez de clusters ET un cluster ≥ 2k :
+    → Diviser le plus gros cluster en deux
+```
+
+**Avantages de cette approche** :
+- ✅ Respecte la structure naturelle du graphe (communautés)
+- ✅ Garantit la contrainte $|C_i| \\geq k$
+- ✅ Temps de calcul raisonnable O(n²)
+
+**Alternative possible** : Clustering spectral, k-means sur les embeddings, ou partitionnement par degré.
+
 ### Formalisation Mathématique
 
 **Modèle de graphe généralisé** :
