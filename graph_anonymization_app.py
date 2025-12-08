@@ -23,6 +23,11 @@ from definitions_and_attacks import (
     GRAPH_PROPERTIES,
     CONCRETE_ATTACK_EXAMPLES
 )
+from thesis_references import (
+    THESIS_REFERENCES,
+    format_thesis_reference,
+    get_method_references
+)
 
 # Configuration de la page
 st.set_page_config(
@@ -794,6 +799,13 @@ $$P(\\text{identité de } v | \\deg(v) = d) \\leq \\frac{1}{k}$$
 **NP-complétude** : Trouver le nombre minimum d'arêtes à ajouter est NP-difficile.
 
 **Complexité** : O(n²) en pratique (itérations × ajustements)
+
+---
+
+📖 **Références Thèse:**
+- **p.30** - Section 2.2: k-Anonymity pour les graphes
+- **p.32** - Section 2.2.1: k-Degree Anonymity - définition et algorithmes
+- **p.45** - Section 2.5: Modèles d'attaques
         """,
         "formula": r"|\{v \in V : deg(v) = d\}| \geq k \quad \forall d",
         "privacy_level": "Moyenne à Forte (garantie k-anonymity)",
@@ -848,6 +860,12 @@ dans son cluster.
 d'information tout en respectant $|C_i| \\geq k$ est NP-difficile.
 
 **Complexité** : O(n²) à O(n³) selon l'algorithme de clustering
+
+---
+
+📖 **Références Thèse:**
+- **p.40** - Section 2.3: Généralisation par super-nodes
+- **p.30** - Section 2.2: Fondements de la k-anonymity
         """,
         "formula": r"G^* = (V^*, E^*) \text{ où } V^* = \{C_i : |C_i| \geq k\}",
         "privacy_level": "Forte (k-anonymity structurelle)",
@@ -934,6 +952,13 @@ probabilités pour éviter cette concentration autour de 0/1.
 **Utilité pédagogique** : Cette méthode est conservée dans l'application pour
 montrer l'importance de la **conception d'algorithmes** en privacy. Une formulation
 mathématique correcte ne garantit pas une implémentation sécurisée!
+
+---
+
+📖 **Références Thèse:**
+- **p.70** - Section 3.3: Définition de la (k,ε)-obfuscation
+- **p.72** - Section 3.3.2: Formules d'assignation des probabilités
+- **p.75** - Section 3.3.3: ⚠️ Vulnérabilité au threshold attack
         """,
         "formula": r"H(N_k(v)) = -\sum_i p_i \log(p_i) \geq \log(k) - \varepsilon",
         "privacy_level": "⚠️ FAIBLE (vulnérable au seuillage) - Voir MaxVar",
@@ -1055,6 +1080,13 @@ Total : **O(m²)** (peut être réduit avec partitionnement du graphe)
 
 **Trade-off** : MaxVar est plus coûteux en calcul mais offre de meilleures garanties
 de privacy et d'utilité.
+
+---
+
+📖 **Références Thèse:**
+- **p.80** - Section 3.4: MaxVar - Variance Maximizing Scheme
+- **p.82** - Section 3.4.2: Formulation du programme quadratique
+- **p.85** - Section 3.4.3: Détails d'implémentation et nearby edges
         """,
         "formula": r"\min \sum_{i} p_i^2 \text{ s.t. } \sum_{v \in N(u)} p_{uv} = \deg(u)",
         "privacy_level": "Forte (résiste au seuillage)",
@@ -1160,6 +1192,13 @@ $$\\approx n(n-1)/4 \\text{  (pour } s \\approx 1\\text{, très bruité)}$$
 **Complexité** : O(n²)
 
 **Inconvénient** : Complexité quadratique limite le passage à l'échelle.
+
+---
+
+📖 **Références Thèse:**
+- **p.50** - Section 2.4: Differential Privacy pour les graphes
+- **p.52** - Section 2.4.1: Edge-Level Differential Privacy
+- **p.110** - Section 5: Évaluation expérimentale
         """,
         "formula": r"P[\mathcal{A}(G) = O] \leq e^\varepsilon \cdot P[\mathcal{A}(G') = O]",
         "privacy_level": "Très Forte (ε-differential privacy)",
@@ -2980,6 +3019,27 @@ def main():
     st.sidebar.markdown(f"**Catégorie** : {method['category']}")
     st.sidebar.markdown(f"**Description** : {method['description_short']}")
 
+    # Références à la thèse pour cette méthode
+    method_internal_key = {
+        "k-degree anonymity": "KDegreeAnonymity",
+        "Generalization": "Generalization",
+        "Probabilistic": "ProbabilisticObfuscation",
+        "MaxVar": "MaxVar",
+        "EdgeFlip": "EdgeFlip",
+        "Laplace": "Laplace"
+    }.get(method_key, None)
+
+    if method_internal_key:
+        refs = get_method_references(method_internal_key)
+        if refs:
+            with st.sidebar.expander("📖 Références Thèse", expanded=False):
+                st.markdown("**Sources dans la thèse:**")
+                for ref_key in refs[:3]:  # Afficher max 3 références principales
+                    if ref_key in THESIS_REFERENCES:
+                        ref = THESIS_REFERENCES[ref_key]
+                        st.markdown(f"• **p.{ref['page']}** - {ref['section']}")
+                st.caption("💡 Cliquez sur 'Voir la Thèse' en bas pour plus de détails")
+
     # Section de paramètres modulables
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚙️ Budget de Privacy (Modulable)")
@@ -3145,6 +3205,39 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
 
                 if st.sidebar.button("🔄 Afficher graphe incertain", type="secondary"):
                     st.session_state.show_sample = False
+
+    # Section Thèse PDF
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📚 Thèse de Référence")
+
+    with st.sidebar.expander("📖 Voir la Thèse", expanded=False):
+        st.markdown("""
+        **"Anonymisation de Graphes Sociaux"**
+        *NGUYEN Huu-Hiep (2016)*
+
+        Université de Lorraine
+        """)
+
+        # Afficher le PDF
+        try:
+            import base64
+            with open("assets/thesis.pdf", "rb") as f:
+                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+
+            # Bouton pour télécharger le PDF
+            st.download_button(
+                label="📥 Télécharger la thèse (PDF)",
+                data=open("assets/thesis.pdf", "rb").read(),
+                file_name="NGUYEN_Anonymisation_Graphes_Sociaux_2016.pdf",
+                mime="application/pdf"
+            )
+
+            # Afficher un iframe avec le PDF
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="400" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
+
+        except FileNotFoundError:
+            st.warning("Fichier PDF non trouvé. Placez thesis.pdf dans le dossier assets/")
 
     # Affichage des résultats
     if 'anonymized' in st.session_state and st.session_state.anonymized:
