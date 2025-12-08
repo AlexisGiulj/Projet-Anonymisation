@@ -3095,6 +3095,19 @@ def main():
     if "Karate" in graph_choice:
         G = nx.karate_club_graph()
         st.sidebar.success(f"✓ Graphe Karate Club chargé: {G.number_of_nodes()} nœuds, {G.number_of_edges()} arêtes")
+
+        # Mini présentation du Karate Club
+        with st.sidebar.expander("ℹ️ À propos du Karate Club", expanded=False):
+            st.markdown("""
+            **Graphe de Zachary** (1977)
+
+            Réseau social d'un club de karaté universitaire :
+            - **34 membres** (nœuds)
+            - **78 relations** sociales (arêtes)
+            - **2 communautés** formées après une scission réelle du club
+
+            Graphe de référence classique en analyse de réseaux sociaux.
+            """)
     elif "Petit" in graph_choice:
         G = nx.erdos_renyi_graph(20, 0.15, seed=42)
         st.sidebar.success(f"✓ Graphe aléatoire chargé: {G.number_of_nodes()} nœuds, {G.number_of_edges()} arêtes")
