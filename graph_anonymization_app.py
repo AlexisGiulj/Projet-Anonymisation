@@ -1655,6 +1655,8 @@ def plot_probabilistic_graph(prob_graph, G_orig, method_name, ax):
         Line2D([0], [0], color=cmap(0.50), linewidth=2, label='Prob. moyenne (≈ 50%)'),
         Line2D([0], [0], color=cmap(0.30), linewidth=1.5, label='Prob. faible (≈ 30%)'),
         Line2D([0], [0], color=cmap(0.10), linewidth=1, linestyle='dotted', label='Prob. très faible (≈ 10%)'),
+        Line2D([0], [0], color='black', linewidth=2, linestyle='solid', label='─── Arêtes originales'),
+        Line2D([0], [0], color='black', linewidth=2, linestyle='dotted', label='··· Arêtes potentielles'),
     ]
 
     ax.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.9)
@@ -3420,6 +3422,11 @@ En DP, epsilon mesure la "perte de privacy" : plus c'est petit, mieux c'est !"""
                         Dans un graphe probabiliste (k,ε)-obfuscation, chaque arête a une **probabilité d'existence**.
                         Au lieu de publier le graphe probabiliste directement, on peut publier des **graphes échantillons**
                         tirés au sort selon ces probabilités.
+
+                        **🔍 Visualisation** :
+                        - **Arêtes pleines (───)** : Arêtes du graphe **original**
+                        - **Arêtes pointillés (···)** : Arêtes **potentielles** ajoutées pour l'anonymisation
+                        - **Couleur & Épaisseur** : Indiquent la probabilité d'existence
 
                         - **Arêtes à haute probabilité** (≈ 95%) : Apparaissent presque toujours
                         - **Arêtes à faible probabilité** (≈ 10%) : Apparaissent rarement
